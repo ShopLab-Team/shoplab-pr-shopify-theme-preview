@@ -72,7 +72,7 @@ jobs:
 
       - name: Deploy/Update PR Theme
         if: github.event.action != 'closed'
-        uses: shoplab/shopify-pr-theme-preview@v1
+        uses: ShopLab-Team/shopify-pr-theme-preview@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
@@ -81,7 +81,7 @@ jobs:
 
       - name: Cleanup PR Theme
         if: github.event.action == 'closed'
-        uses: shoplab/shopify-pr-theme-preview@v1
+        uses: ShopLab-Team/shopify-pr-theme-preview@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
@@ -134,7 +134,7 @@ If your theme requires compilation:
 
 - name: Deploy/Update PR Theme
   if: github.event.action != 'closed'
-  uses: shoplab/shopify-pr-theme-preview@v1
+  uses: ShopLab-Team/shopify-pr-theme-preview@v1
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
@@ -149,7 +149,7 @@ To pull settings from a staging theme instead of live:
 
 ```yaml
 - name: Deploy/Update PR Theme
-  uses: shoplab/shopify-pr-theme-preview@v1
+  uses: ShopLab-Team/shopify-pr-theme-preview@v1
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
@@ -171,7 +171,7 @@ If your theme is in a subdirectory:
       themes/my-theme
 
 - name: Deploy Theme
-  uses: shoplab/shopify-pr-theme-preview@v1
+  uses: ShopLab-Team/shopify-pr-theme-preview@v1
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
@@ -241,11 +241,11 @@ See [examples/example.yml](examples/example.yml) for a complete workflow with al
 
 ## 📄 License
 
-MIT © [shoplab](https://github.com/shoplab)
+MIT © [shoplab](https://github.com/ShopLab-Team)
 
 ## 🆘 Support
 
-- [Report a bug](https://github.com/shoplab/shopify-pr-theme-preview/issues)
-- [Request a feature](https://github.com/shoplab/shopify-pr-theme-preview/issues)
+- [Report a bug](https://github.com/ShopLab-Team/shopify-pr-theme-preview/issues)
+- [Request a feature](https://github.com/ShopLab-Team/shopify-pr-theme-preview/issues)
 - [Shopify CLI Documentation](https://shopify.dev/docs/themes/tools/cli)
 - [GitHub Actions Documentation](https://docs.github.com/actions)
