@@ -60,17 +60,19 @@ THEME_NAME=$(printf '%s' "$PR_TITLE" | \
 
 echo "📝 Theme name: ${THEME_NAME}"
 
+# Escape special regex characters in theme name for grep patterns
+THEME_NAME_ESCAPED=$(printf '%s' "$THEME_NAME" | sed 's/[][\.^$()|*+?{}]/\\&/g')
+
 # Find existing theme ID from PR comments
 echo "🔍 Checking for existing theme..."
 COMMENTS=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments")
 
 # Parse comments for theme ID using the theme name
-# Use grep -F for fixed string matching to avoid regex issues with special characters
 while IFS= read -r line; do
   # Check if line contains our theme marker using fixed string matching
   if echo "$line" | grep -F "<!-- THEME_NAME:${THEME_NAME}:ID:" | grep -q ":END -->"; then
-    # Extract the full theme data using a more careful approach
-    THEME_DATA=$(echo "$line" | grep -o "<!-- THEME_NAME:${THEME_NAME}:ID:[0-9]*:END -->" 2>/dev/null || echo "")
+    # Extract the full theme data using escaped theme name for regex
+    THEME_DATA=$(echo "$line" | grep -o "<!-- THEME_NAME:${THEME_NAME_ESCAPED}:ID:[0-9]*:END -->" 2>/dev/null || echo "")
     if [ -n "$THEME_DATA" ]; then
       # Extract just the ID number
       EXISTING_THEME_ID=$(echo "$THEME_DATA" | sed 's/.*:ID:\([0-9]*\):END.*/\1/')
