@@ -1,6 +1,6 @@
 # Shopify PR Theme Preview Action
 
-[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-Shopify%20PR%20Theme%20Preview-blue?logo=github)](https://github.com/marketplace/actions/shopify-pr-theme-preview)
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-Shopify%20PR%20Theme%20Preview-blue?logo=github)](https://github.com/marketplace/actions/shoplab-pr-shopify-theme-preview)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Automatically deploy and manage Shopify preview themes for pull requests. This GitHub Action creates isolated theme environments for each PR, making it easy to review changes before merging.
@@ -72,7 +72,7 @@ jobs:
 
       - name: Deploy/Update PR Theme
         if: github.event.action != 'closed'
-        uses: ShopLab-Team/shopify-pr-theme-preview@v1
+        uses: ShopLab-Team/shoplab-pr-shopify-theme-preview@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
@@ -81,7 +81,7 @@ jobs:
 
       - name: Cleanup PR Theme
         if: github.event.action == 'closed'
-        uses: ShopLab-Team/shopify-pr-theme-preview@v1
+        uses: ShopLab-Team/shoplab-pr-shopify-theme-preview@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
@@ -134,7 +134,7 @@ If your theme requires compilation:
 
 - name: Deploy/Update PR Theme
   if: github.event.action != 'closed'
-  uses: ShopLab-Team/shopify-pr-theme-preview@v1
+  uses: ShopLab-Team/shoplab-pr-shopify-theme-preview@v1
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
@@ -149,7 +149,7 @@ To pull settings from a staging theme instead of live:
 
 ```yaml
 - name: Deploy/Update PR Theme
-  uses: ShopLab-Team/shopify-pr-theme-preview@v1
+  uses: ShopLab-Team/shoplab-pr-shopify-theme-preview@v1
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
@@ -171,7 +171,7 @@ If your theme is in a subdirectory:
       themes/my-theme
 
 - name: Deploy Theme
-  uses: ShopLab-Team/shopify-pr-theme-preview@v1
+  uses: ShopLab-Team/shoplab-pr-shopify-theme-preview@v1
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
@@ -245,7 +245,7 @@ MIT © [shoplab](https://github.com/ShopLab-Team)
 
 ## 🆘 Support
 
-- [Report a bug](https://github.com/ShopLab-Team/shopify-pr-theme-preview/issues)
-- [Request a feature](https://github.com/ShopLab-Team/shopify-pr-theme-preview/issues)
+- [Report a bug](https://github.com/ShopLab-Team/shoplab-pr-shopify-theme-preview/issues)
+- [Request a feature](https://github.com/ShopLab-Team/shoplab-pr-shopify-theme-preview/issues)
 - [Shopify CLI Documentation](https://shopify.dev/docs/themes/tools/cli)
 - [GitHub Actions Documentation](https://docs.github.com/actions)

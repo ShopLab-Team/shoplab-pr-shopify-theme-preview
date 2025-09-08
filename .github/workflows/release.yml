@@ -109,5 +109,5 @@ jobs:
           echo "🎉 Release ${{ steps.get_version.outputs.version }} is ready!"
           echo "The action is now available in the GitHub Marketplace"
           echo "Users can reference it as:"
-          echo "  - ShopLab-Team/shopify-pr-theme-preview@${{ steps.get_version.outputs.version }}"
-          echo "  - ShopLab-Team/shopify-pr-theme-preview@$(echo ${{ steps.get_version.outputs.version }} | cut -d. -f1)"
+          echo "  - ShopLab-Team/shoplab-pr-shopify-theme-preview@${{ steps.get_version.outputs.version }}"
+          echo "  - ShopLab-Team/shoplab-pr-shopify-theme-preview@$(echo ${{ steps.get_version.outputs.version }} | cut -d. -f1)"
