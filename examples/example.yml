@@ -1,0 +1,66 @@
+name: PR Theme Management
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+# Cancel in-progress runs for the same PR
+concurrency:
+  group: pr-theme-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  manage-theme:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    # Security: Only run for PRs from the same repository (not forks)
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    
+    permissions:
+      pull-requests: write
+      issues: write
+      contents: read
+      
+    steps:
+      - name: Checkout code
+        if: github.event.action != 'closed'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      # OPTIONAL: Add build steps if your theme requires compilation
+      # - name: Setup Node.js
+      #   if: github.event.action != 'closed'
+      #   uses: actions/setup-node@v5
+      #   with:
+      #     node-version: '20'  # OPTIONAL: defaults to 20
+      
+      # - name: Install dependencies
+      #   if: github.event.action != 'closed'
+      #   run: npm ci
+
+      - name: Deploy/Update PR Theme
+        if: github.event.action != 'closed'
+        uses: shoplab/shopify-pr-theme-preview@v1
+        with:
+          # REQUIRED inputs
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
+          shopify-cli-theme-token: ${{ secrets.SHOPIFY_CLI_THEME_TOKEN }}
+          action-type: 'deploy'
+          
+          # OPTIONAL inputs (with defaults)
+          # source-theme-id: '123456789'  # Theme ID to pull settings from (defaults to live theme)
+          # build-command: 'npm run build'  # Command to build assets before deployment
+          # node-version: '20'  # Node.js version (defaults to 20)
+
+      - name: Cleanup PR Theme
+        if: github.event.action == 'closed'
+        uses: shoplab/shopify-pr-theme-preview@v1
+        with:
+          # REQUIRED inputs
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
+          shopify-cli-theme-token: ${{ secrets.SHOPIFY_CLI_THEME_TOKEN }}
+          action-type: 'cleanup'

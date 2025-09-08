@@ -1,0 +1,32 @@
+{
+  "name": "shopify-pr-theme-preview",
+  "version": "1.0.0",
+  "description": "GitHub Action to automatically deploy and manage Shopify preview themes for pull requests",
+  "main": "action.yml",
+  "scripts": {
+    "test": "echo \"No tests configured\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shoplab/shopify-pr-theme-preview.git"
+  },
+  "keywords": [
+    "github-actions",
+    "shopify",
+    "theme",
+    "preview",
+    "deployment",
+    "ci-cd",
+    "pull-request",
+    "automation"
+  ],
+  "author": "shoplab",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/shoplab/shopify-pr-theme-preview/issues"
+  },
+  "homepage": "https://github.com/shoplab/shopify-pr-theme-preview#readme",
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

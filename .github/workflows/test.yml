@@ -1,0 +1,55 @@
+name: Test Action
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      
+      - name: Check shell scripts syntax
+        run: |
+          # Make scripts executable
+          chmod +x scripts/*.sh
+          
+          # Check for syntax errors
+          for script in scripts/*.sh; do
+            echo "Checking $script..."
+            bash -n "$script"
+          done
+          echo "✅ All scripts have valid syntax"
+          
+      - name: Validate action.yml
+        run: |
+          # Check if action.yml exists and has required fields
+          if [ ! -f "action.yml" ]; then
+            echo "❌ action.yml not found"
+            exit 1
+          fi
+          
+          # Basic validation
+          if ! grep -q "^name:" action.yml; then
+            echo "❌ Missing 'name' field in action.yml"
+            exit 1
+          fi
+          
+          if ! grep -q "^description:" action.yml; then
+            echo "❌ Missing 'description' field in action.yml"
+            exit 1
+          fi
+          
+          echo "✅ action.yml is valid"
+          
+      - name: Check example workflow
+        run: |
+          if [ -f "examples/example.yml" ]; then
+            echo "✅ Example workflow found"
+          else
+            echo "❌ examples/example.yml not found"
+            exit 1
+          fi

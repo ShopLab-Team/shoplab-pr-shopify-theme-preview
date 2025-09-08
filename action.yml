@@ -1,0 +1,91 @@
+name: 'Shopify PR Theme Preview'
+description: 'Automatically deploy and manage Shopify preview themes for pull requests'
+author: 'shoplab'
+branding:
+  icon: 'eye'
+  color: 'green'
+
+inputs:
+  github-token:
+    description: 'GitHub token for PR operations'
+    required: true
+  shopify-store-url:
+    description: 'Shopify store URL (e.g., mystore.myshopify.com)'
+    required: true
+  shopify-cli-theme-token:
+    description: 'Shopify CLI theme access token'
+    required: true
+  action-type:
+    description: 'Type of action to perform: deploy or cleanup'
+    required: true
+  source-theme-id:
+    description: 'Theme ID to pull settings from (optional, uses live theme if not provided)'
+    required: false
+    default: ''
+  build-command:
+    description: 'Command to build assets before deployment (optional)'
+    required: false
+    default: ''
+  node-version:
+    description: 'Node.js version to use (optional)'
+    required: false
+    default: '20'
+
+outputs:
+  theme-id:
+    description: 'The ID of the deployed theme'
+    value: ${{ steps.run-action.outputs.theme-id }}
+  preview-url:
+    description: 'The preview URL for the theme'
+    value: ${{ steps.run-action.outputs.preview-url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v5
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        echo "📦 Installing required tools..."
+        npm install -g @shopify/cli@latest
+        
+        # Install jq for JSON parsing (fallback for systems without Node)
+        if ! command -v jq &> /dev/null; then
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y jq
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            brew install jq 2>/dev/null || true
+          fi
+        fi
+
+    - name: Make scripts executable
+      shell: bash
+      run: |
+        chmod +x ${{ github.action_path }}/scripts/deploy.sh
+        chmod +x ${{ github.action_path }}/scripts/cleanup.sh
+
+    - name: Run action
+      id: run-action
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        SHOPIFY_FLAG_STORE: ${{ inputs.shopify-store-url }}
+        SHOPIFY_CLI_THEME_TOKEN: ${{ inputs.shopify-cli-theme-token }}
+        SOURCE_THEME_ID: ${{ inputs.source-theme-id }}
+        BUILD_COMMAND: ${{ inputs.build-command }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        ACTION_TYPE: ${{ inputs.action-type }}
+      run: |
+        if [ "$ACTION_TYPE" == "deploy" ]; then
+          ${{ github.action_path }}/scripts/deploy.sh
+        elif [ "$ACTION_TYPE" == "cleanup" ]; then
+          ${{ github.action_path }}/scripts/cleanup.sh
+        else
+          echo "Error: Invalid action-type. Must be 'deploy' or 'cleanup'"
+          exit 1
+        fi
