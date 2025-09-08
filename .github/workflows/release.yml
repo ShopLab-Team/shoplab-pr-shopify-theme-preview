@@ -29,9 +29,10 @@ jobs:
       - name: Validate version format
         run: |
           VERSION="${{ steps.get_version.outputs.version }}"
-          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          # Accept both simple (v1, v2) and semantic versioning (v1.0.0)
+          if ! [[ "$VERSION" =~ ^v[0-9]+(\.[0-9]+(\.[0-9]+)?)?$ ]]; then
             echo "❌ Invalid version format: $VERSION"
-            echo "Version should be in format: v1.0.0"
+            echo "Version should be in format: v1, v1.0, or v1.0.0"
             exit 1
           fi
           echo "✅ Valid version: $VERSION"
@@ -40,8 +41,11 @@ jobs:
         run: |
           VERSION="${{ steps.get_version.outputs.version }}"
           VERSION_NUM=${VERSION#v}
-          if ! grep -q "\[$VERSION_NUM\]" CHANGELOG.md; then
+          # Try to find version in CHANGELOG (could be 1 or 1.0.0)
+          if ! grep -q "\[$VERSION_NUM" CHANGELOG.md; then
             echo "⚠️ Warning: Version $VERSION_NUM not found in CHANGELOG.md"
+          else
+            echo "✅ Version $VERSION_NUM found in CHANGELOG.md"
           fi
           
       - name: Extract release notes
@@ -50,11 +54,20 @@ jobs:
           VERSION="${{ steps.get_version.outputs.version }}"
           VERSION_NUM=${VERSION#v}
           
-          # Extract release notes from CHANGELOG
-          NOTES=$(awk "/## \[$VERSION_NUM\]/,/## \[/{/## \[/d; p;}" CHANGELOG.md | head -n -1)
+          # Try to extract release notes from CHANGELOG
+          # Look for version with or without patch/minor numbers
+          NOTES=$(awk "/## \\[$VERSION_NUM/,/## \\[/{/## \\[/d; p;}" CHANGELOG.md 2>/dev/null | head -n -1)
           
           if [ -z "$NOTES" ]; then
-            NOTES="Release $VERSION"
+            NOTES="Release $VERSION - Simplified PR Theme Preview Action
+            
+            This action automatically creates and manages Shopify preview themes for pull requests.
+            
+            Key features:
+            - Uses PR title as theme name
+            - Automatic deployment and cleanup
+            - Settings preservation
+            - Preview links in PR comments"
           fi
           
           # Save to file for GitHub release
@@ -73,17 +86,23 @@ jobs:
       - name: Update major version tag
         run: |
           VERSION="${{ steps.get_version.outputs.version }}"
-          MAJOR_VERSION=$(echo $VERSION | cut -d. -f1)
+          # Extract major version (v1 from v1 or v1.0.0)
+          MAJOR_VERSION=$(echo $VERSION | grep -oE '^v[0-9]+' || echo $VERSION)
           
-          # Delete existing major version tag if it exists
-          git tag -d $MAJOR_VERSION 2>/dev/null || true
-          git push origin :refs/tags/$MAJOR_VERSION 2>/dev/null || true
-          
-          # Create new major version tag
-          git tag $MAJOR_VERSION
-          git push origin $MAJOR_VERSION
-          
-          echo "✅ Updated major version tag: $MAJOR_VERSION"
+          # Only update if it's different from current tag
+          if [ "$VERSION" != "$MAJOR_VERSION" ]; then
+            # Delete existing major version tag if it exists
+            git tag -d $MAJOR_VERSION 2>/dev/null || true
+            git push origin :refs/tags/$MAJOR_VERSION 2>/dev/null || true
+            
+            # Create new major version tag
+            git tag $MAJOR_VERSION
+            git push origin $MAJOR_VERSION
+            
+            echo "✅ Updated major version tag: $MAJOR_VERSION"
+          else
+            echo "ℹ️ Version tag $VERSION is already a major version tag"
+          fi
           
       - name: Notify Marketplace
         run: |
