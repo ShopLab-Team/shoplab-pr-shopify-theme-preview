@@ -60,30 +60,80 @@ while IFS= read -r line; do
   fi
 done <<< "$COMMENTS"
 
+# Function to delete theme by ID
+delete_theme_by_id() {
+  local theme_id=$1
+  echo "🗑️ Attempting to delete theme with ID: ${theme_id}"
+  
+  # Try to delete directly first (fastest approach)
+  if shopify theme delete --theme ${theme_id} --force 2>&1 | grep -q "Theme deleted"; then
+    echo "✅ Theme ${theme_id} deleted successfully"
+    return 0
+  fi
+  
+  return 1
+}
+
+# Function to find and delete theme by name
+find_and_delete_by_name() {
+  local theme_name="$1"
+  echo "🔍 Searching for theme by exact name match: ${theme_name}"
+  
+  # Get list of all themes
+  THEME_LIST=$(shopify theme list --json 2>/dev/null || echo "[]")
+  
+  # Try to find theme by exact name match using Node.js for JSON parsing
+  FOUND_THEME_ID=$(echo "$THEME_LIST" | node -e '
+    let data = "";
+    process.stdin.on("data", chunk => data += chunk);
+    process.stdin.on("end", () => {
+      try {
+        const themes = JSON.parse(data);
+        if (Array.isArray(themes)) {
+          const theme = themes.find(t => t.name === process.argv[1]);
+          if (theme && theme.id) {
+            process.stdout.write(String(theme.id));
+          }
+        }
+      } catch (e) {
+        // Silent fail
+      }
+    });' "$theme_name" 2>/dev/null || echo "")
+  
+  if [ -n "$FOUND_THEME_ID" ]; then
+    echo "✅ Found theme by name with ID: ${FOUND_THEME_ID}"
+    delete_theme_by_id "$FOUND_THEME_ID"
+    return $?
+  fi
+  
+  return 1
+}
+
 if [ -n "$THEME_ID" ]; then
-  echo "✅ Found theme ID to delete: ${THEME_ID}"
+  echo "✅ Found theme ID from PR comments: ${THEME_ID}"
   
-  # Verify theme exists before trying to delete
-  echo "🔍 Verifying theme exists..."
-  THEME_LIST=$(shopify theme list --json 2>/dev/null || echo "{}")
-  
-  if echo "$THEME_LIST" | grep -q "\"id\":${THEME_ID}"; then
-    echo "📍 Theme found in store, proceeding with deletion..."
-    
-    # Delete the theme
-    shopify theme delete --theme ${THEME_ID} --force 2>&1 | while IFS= read -r line; do
-      # Filter out noisy output
-      if [[ ! "$line" =~ "Deleting theme" ]]; then
-        echo "$line"
-      fi
-    done
-    
-    echo "✅ Theme ${THEME_ID} deleted successfully"
+  # Try to delete by ID first
+  if delete_theme_by_id "$THEME_ID"; then
+    echo "🎉 Theme deleted using ID from comments"
   else
-    echo "⚠️ Theme ${THEME_ID} not found in store (may have been manually deleted)"
+    echo "⚠️ Could not delete theme by ID, trying fallback search by name..."
+    
+    # Fallback: try to find and delete by exact name match
+    if find_and_delete_by_name "$THEME_NAME"; then
+      echo "🎉 Theme deleted using name match"
+    else
+      echo "ℹ️ Theme not found (may have been manually deleted or never created)"
+    fi
   fi
 else
-  echo "ℹ️ No theme ID found in PR comments - nothing to delete"
+  echo "⚠️ No theme ID found in PR comments, searching by name..."
+  
+  # Try to find and delete by exact name match
+  if find_and_delete_by_name "$THEME_NAME"; then
+    echo "🎉 Theme deleted using name match"
+  else
+    echo "ℹ️ No theme found with name: ${THEME_NAME}"
+  fi
 fi
 
 echo "🎉 Cleanup complete!"
