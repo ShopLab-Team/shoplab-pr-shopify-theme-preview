@@ -2,12 +2,16 @@ name: PR Theme Management
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, closed]
+    types: [opened, synchronize, reopened, closed, labeled]
 
 # Cancel in-progress runs for the same PR
 concurrency:
   group: pr-theme-${{ github.event.pull_request.number }}
   cancel-in-progress: true
+
+# Label features:
+# - Add 'rebuild-theme' label to recreate a deleted theme
+# - Add 'preserve-theme' label to protect theme from auto-deletion when hitting Shopify's 20-theme limit
 
 jobs:
   manage-theme:
@@ -24,24 +28,24 @@ jobs:
       
     steps:
       - name: Checkout code
-        if: github.event.action != 'closed'
+        if: github.event.action != 'closed' && (github.event.action != 'labeled' || github.event.label.name == 'rebuild-theme')
         uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
       # OPTIONAL: Add build steps if your theme requires compilation
       # - name: Setup Node.js
-      #   if: github.event.action != 'closed'
+      #   if: github.event.action != 'closed' && (github.event.action != 'labeled' || github.event.label.name == 'rebuild-theme')
       #   uses: actions/setup-node@v5
       #   with:
       #     node-version: '20'  # OPTIONAL: defaults to 20
       
       # - name: Install dependencies
-      #   if: github.event.action != 'closed'
+      #   if: github.event.action != 'closed' && (github.event.action != 'labeled' || github.event.label.name == 'rebuild-theme')
       #   run: npm ci
 
       - name: Deploy/Update PR Theme
-        if: github.event.action != 'closed'
+        if: github.event.action != 'closed' && (github.event.action != 'labeled' || github.event.label.name == 'rebuild-theme')
         uses: ShopLab-Team/shoplab-pr-shopify-theme-preview@v1
         with:
           # REQUIRED inputs

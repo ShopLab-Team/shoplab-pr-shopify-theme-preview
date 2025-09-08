@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Automatic theme limit management for Shopify's 20-theme limit
+- Auto-deletion of oldest themes when hitting limit (sorted by last update time)
+- `preserve-theme` label to protect themes from auto-deletion
+- `rebuild-theme` label to recreate deleted themes
+- Retry logic with automatic cleanup when theme creation fails
+- Notification comments when themes are auto-removed
+
 ### Changed
 - Simplified action configuration - removed pr-number requirement
 - Now uses PR title directly as theme name for better clarity
@@ -38,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Simplified package.json by removing unnecessary scripts
 - Streamlined test workflow to focus on essential checks
 - Updated scripts to use PR title-based theme identification
+- Workflow now responds to 'labeled' events for theme rebuilding
 
 ### Removed
 - Removed separate SETUP.md file (content merged into README.md)

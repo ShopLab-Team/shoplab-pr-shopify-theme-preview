@@ -13,6 +13,37 @@ Automatically deploy and manage Shopify preview themes for pull requests. This G
 - 🔗 **Preview Links** - Adds preview URLs directly to PR comments
 - 🧹 **Auto Cleanup** - Deletes themes when PRs are closed or merged
 - 🔒 **Secure** - Built with security best practices
+- 🎯 **Theme Limit Handling** - Automatically manages Shopify's 20-theme limit
+
+## 🎯 Automatic Theme Limit Management
+
+Shopify stores have a limit of 20 development themes. This action automatically handles this limit:
+
+### How it works:
+1. **Detects theme limit errors** - When creating a new theme hits the 20-theme limit
+2. **Finds the oldest theme** - Identifies themes from open PRs (sorted by last update time)
+3. **Respects protected themes** - Skips themes with the `preserve-theme` label
+4. **Auto-removes oldest theme** - Deletes it and notifies the PR author
+5. **Retries theme creation** - Automatically creates your new theme
+
+### Label Features:
+- **`preserve-theme`** - Add this label to protect a PR's theme from auto-deletion
+- **`rebuild-theme`** - Add this label to recreate a deleted theme
+
+### Auto-Removal Notification:
+When a theme is auto-removed, the PR receives this comment:
+```
+⚠️ Theme Auto-Removed Due to Store Limit
+
+Your preview theme was automatically deleted to make room for newer PRs 
+(Shopify limit: 20 themes).
+
+To recreate your preview theme:
+- Add the label `rebuild-theme` to this PR
+- Or push a new commit
+
+The theme will be automatically recreated.
+```
 
 ## 🚀 Quick Setup
 
@@ -43,7 +74,7 @@ name: PR Theme Management
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, closed]
+    types: [opened, synchronize, reopened, closed, labeled]
 
 # Cancel in-progress runs for the same PR
 concurrency:
@@ -65,13 +96,13 @@ jobs:
       
     steps:
       - name: Checkout code
-        if: github.event.action != 'closed'
+        if: github.event.action != 'closed' && (github.event.action != 'labeled' || github.event.label.name == 'rebuild-theme')
         uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Deploy/Update PR Theme
-        if: github.event.action != 'closed'
+        if: github.event.action != 'closed' && (github.event.action != 'labeled' || github.event.label.name == 'rebuild-theme')
         uses: ShopLab-Team/shoplab-pr-shopify-theme-preview@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
