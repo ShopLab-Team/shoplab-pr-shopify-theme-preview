@@ -62,16 +62,28 @@ done <<< "$COMMENTS"
 
 # Function to delete theme by ID
 delete_theme_by_id() {
-  local theme_id=$1
+  local theme_id="$1"
   echo "🗑️ Attempting to delete theme with ID: ${theme_id}"
   
-  # Try to delete directly first (fastest approach)
-  if shopify theme delete --theme ${theme_id} --force 2>&1 | grep -q "Theme deleted"; then
+  # Use -t flag as per Shopify CLI docs and capture output
+  DELETE_OUTPUT=$(shopify theme delete -t "${theme_id}" --force 2>&1)
+  DELETE_EXIT_CODE=$?
+  
+  # Check if deletion was successful
+  if [ $DELETE_EXIT_CODE -eq 0 ]; then
     echo "✅ Theme ${theme_id} deleted successfully"
     return 0
+  elif echo "$DELETE_OUTPUT" | grep -q "Theme.*deleted"; then
+    echo "✅ Theme ${theme_id} deleted successfully"
+    return 0
+  elif echo "$DELETE_OUTPUT" | grep -q "Theme.*not found"; then
+    echo "⚠️ Theme ${theme_id} not found"
+    return 1
+  else
+    echo "⚠️ Could not delete theme ${theme_id}"
+    echo "Debug output: $DELETE_OUTPUT"
+    return 1
   fi
-  
-  return 1
 }
 
 # Function to find and delete theme by name
@@ -102,27 +114,34 @@ find_and_delete_by_name() {
   
   if [ -n "$FOUND_THEME_ID" ]; then
     echo "✅ Found theme by name with ID: ${FOUND_THEME_ID}"
-    delete_theme_by_id "$FOUND_THEME_ID"
-    return $?
+    if delete_theme_by_id "$FOUND_THEME_ID"; then
+      return 0
+    else
+      return 1
+    fi
+  else
+    echo "ℹ️ No theme found with name: ${theme_name}"
+    return 1
   fi
-  
-  return 1
 }
+
+# Main deletion logic
+DELETED=false
 
 if [ -n "$THEME_ID" ]; then
   echo "✅ Found theme ID from PR comments: ${THEME_ID}"
   
   # Try to delete by ID first
   if delete_theme_by_id "$THEME_ID"; then
-    echo "🎉 Theme deleted using ID from comments"
+    echo "🎉 Theme deleted successfully using ID from comments"
+    DELETED=true
   else
     echo "⚠️ Could not delete theme by ID, trying fallback search by name..."
     
     # Fallback: try to find and delete by exact name match
     if find_and_delete_by_name "$THEME_NAME"; then
-      echo "🎉 Theme deleted using name match"
-    else
-      echo "ℹ️ Theme not found (may have been manually deleted or never created)"
+      echo "🎉 Theme deleted successfully using name match"
+      DELETED=true
     fi
   fi
 else
@@ -130,10 +149,14 @@ else
   
   # Try to find and delete by exact name match
   if find_and_delete_by_name "$THEME_NAME"; then
-    echo "🎉 Theme deleted using name match"
-  else
-    echo "ℹ️ No theme found with name: ${THEME_NAME}"
+    echo "🎉 Theme deleted successfully using name match"
+    DELETED=true
   fi
+fi
+
+# Final status
+if [ "$DELETED" = false ]; then
+  echo "ℹ️ No theme was deleted (theme may have been manually deleted or never created)"
 fi
 
 echo "🎉 Cleanup complete!"
