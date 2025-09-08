@@ -51,12 +51,18 @@ echo "🔍 Looking for theme ID in PR comments..."
 COMMENTS=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments")
 
 # Parse comments for theme ID using the theme name
+# Use grep -F for fixed string matching to avoid regex issues with special characters
 THEME_ID=""
 while IFS= read -r line; do
-  if echo "$line" | grep -q "<!-- THEME_NAME:${THEME_NAME}:ID:[0-9]*:END -->"; then
-    THEME_DATA=$(echo "$line" | grep -o "<!-- THEME_NAME:${THEME_NAME}:ID:[0-9]*:END -->")
-    THEME_ID=$(echo "$THEME_DATA" | sed "s/<!-- THEME_NAME:${THEME_NAME}:ID:\([0-9]*\):END -->/\1/")
-    break
+  # Check if line contains our theme marker using fixed string matching
+  if echo "$line" | grep -F "<!-- THEME_NAME:${THEME_NAME}:ID:" | grep -q ":END -->"; then
+    # Extract the full theme data using a more careful approach
+    THEME_DATA=$(echo "$line" | grep -o "<!-- THEME_NAME:${THEME_NAME}:ID:[0-9]*:END -->" 2>/dev/null || echo "")
+    if [ -n "$THEME_DATA" ]; then
+      # Extract just the ID number
+      THEME_ID=$(echo "$THEME_DATA" | sed 's/.*:ID:\([0-9]*\):END.*/\1/')
+      break
+    fi
   fi
 done <<< "$COMMENTS"
 
