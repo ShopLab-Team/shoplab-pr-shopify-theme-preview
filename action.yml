@@ -1,6 +1,6 @@
 name: 'Shopify PR Theme Preview'
 description: 'Automatically deploy and manage Shopify preview themes for pull requests'
-author: 'shoplab'
+author: 'ShopLab-Team'
 branding:
   icon: 'eye'
   color: 'green'

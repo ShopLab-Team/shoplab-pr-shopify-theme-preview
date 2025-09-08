@@ -42,7 +42,7 @@ jobs:
 
       - name: Deploy/Update PR Theme
         if: github.event.action != 'closed'
-        uses: shoplab/shopify-pr-theme-preview@v1
+        uses: ShopLab-Team/shopify-pr-theme-preview@v1
         with:
           # REQUIRED inputs
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -57,7 +57,7 @@ jobs:
 
       - name: Cleanup PR Theme
         if: github.event.action == 'closed'
-        uses: shoplab/shopify-pr-theme-preview@v1
+        uses: ShopLab-Team/shopify-pr-theme-preview@v1
         with:
           # REQUIRED inputs
           github-token: ${{ secrets.GITHUB_TOKEN }}
