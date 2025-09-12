@@ -543,31 +543,20 @@ fi
 # Deploy or update theme
 if [ -n "${EXISTING_THEME_ID}" ]; then
   echo "🔄 Updating existing theme ID: ${EXISTING_THEME_ID}"
+  echo "💾 Preserving theme settings (excluding JSON files from update)"
   
-  # Build the update command based on no-sync label
-  if [ "$HAS_NO_SYNC_LABEL" = "true" ]; then
-    echo "📄 Pushing all files including JSON (no-sync mode)"
-    # Update theme including JSON files from the repository
-    UPDATE_OUTPUT=$(shopify theme push \
-      --theme "${EXISTING_THEME_ID}" \
-      --nodelete \
-      --no-color \
-      --json 2>&1)
-  else
-    echo "💾 Preserving theme settings (normal mode)"
-    # Update existing theme, excluding JSON files to preserve settings
-    UPDATE_OUTPUT=$(shopify theme push \
-      --theme "${EXISTING_THEME_ID}" \
-      --nodelete \
-      --no-color \
-      --ignore "templates/*.json" \
-      --ignore "sections/*.json" \
-      --ignore "config/settings_data.json" \
-      --ignore "locales/*.json" \
-      --ignore "snippets/*.json" \
-      --ignore "*.json" \
-      --json 2>&1)
-  fi
+  # Always exclude JSON files when updating existing themes to preserve settings
+  # The no-sync label only affects initial theme creation, not updates
+  # Note: We allow locale default files (like en.default.json) to be updated
+  UPDATE_OUTPUT=$(shopify theme push \
+    --theme "${EXISTING_THEME_ID}" \
+    --nodelete \
+    --no-color \
+    --ignore "templates/*.json" \
+    --ignore "sections/*.json" \
+    --ignore "config/settings_data.json" \
+    --ignore "snippets/*.json" \
+    --json 2>&1)
   
   UPDATE_SUCCESS=$?
   

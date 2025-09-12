@@ -243,30 +243,30 @@ You'll receive notifications for:
 
 ### Using Repository JSON Files (no-sync)
 
-By default, the action pulls JSON configuration files from your live/source theme to preserve settings. However, sometimes you want to use the exact JSON files from your repository.
+By default, the action pulls JSON configuration files from your live/source theme during initial theme creation to preserve production settings.
 
-Add the `no-sync` label to your PR to:
-- Skip pulling settings from production/source theme
-- Use JSON files exactly as they are in your repository
-- Deploy the theme with your repo's configuration
+The `no-sync` label **only affects initial theme creation**:
+- **WITH `no-sync`**: Skip pulling settings from production/source theme, use repo's JSON files
+- **WITHOUT `no-sync`**: Pull settings from production/source theme before creating
+
+**Important:** The `no-sync` label does NOT affect theme updates. When updating existing themes, JSON files are ALWAYS excluded to preserve the theme's current settings, regardless of the label.
 
 **When to use `no-sync` label:**
-- Testing new theme settings or configurations
-- Deploying a completely new theme structure
-- When your repo's JSON files are the source of truth
-- Testing theme migrations or major setting changes
-- Debugging issues related to theme settings
+- Creating a theme with completely new settings structure
+- Testing theme settings that differ from production
+- When your repo's JSON files should be the initial configuration
+- Deploying a theme without production settings inheritance
 
-**Example workflow:**
-1. Create PR with theme changes including JSON files
-2. Add `no-sync` label to the PR
-3. Theme deploys with your repo's JSON configuration
-4. Settings from production are NOT pulled/merged
+**Behavior Summary:**
 
-**Note:** When `no-sync` is active:
-- Initial theme creation uses repo JSON files
-- Theme updates push ALL files including JSON
-- No settings preservation occurs
+| Scenario | no-sync Label | Action |
+|----------|--------------|--------|
+| Initial theme creation | No | Pull JSON from production → Push all files including JSON |
+| Initial theme creation | Yes | Don't pull from production → Push all files including JSON from repo |
+| Theme update (exists) | No | Push only non-JSON files (preserve settings) |
+| Theme update (exists) | Yes | Push only non-JSON files (preserve settings) |
+
+**Note:** Locale default files (like `en.default.json`) are always updated even during theme updates to ensure translation changes are applied.
 
 ## 🔧 How It Works
 
@@ -276,19 +276,18 @@ Add the `no-sync` label to your PR to:
 
 ### Files Preserved During Updates
 
-**Normal mode (default):**
+When updating existing themes, the following JSON files are **always preserved** (not updated):
 - `templates/*.json` - Template settings
 - `sections/*.json` - Section settings
-- `config/settings_data.json` - Theme settings
-- `locales/*.json` - Translations
+- `config/settings_data.json` - Theme settings  
 - `snippets/*.json` - Snippet configurations
 
-**With `no-sync` label:**
-- No files are preserved
-- All files including JSON are updated from repository
-- Theme uses exact configuration from your codebase
+**Files that ARE updated:**
+- All `.liquid` files (templates, sections, snippets, layout)
+- All asset files (CSS, JS, images, fonts)
+- Locale default files (`locales/*.default.json`) - to apply translation updates
 
-All other files (liquid templates, assets, etc.) are always updated with each commit.
+**Note:** The `no-sync` label does NOT change this behavior for updates. It only affects whether settings are pulled from production during initial theme creation.
 
 ## 🎨 PR Comment Preview
 

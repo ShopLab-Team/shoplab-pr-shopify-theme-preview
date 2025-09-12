@@ -41,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Error Reporting**: Shopify errors are now posted as PR comments for visibility
 - **Slack Integration**: Optional Slack webhook notifications for deployment status
 - **Improved Retry Logic**: When uploads fail, retries use the same theme ID instead of creating duplicates
-- **No-Sync Mode**: Use repository JSON files as-is without pulling from production
+- **No-Sync Mode**: Skip pulling production settings during initial theme creation (updates always preserve settings)
 
 ### Changed
 - Simplified action configuration - removed pr-number requirement
