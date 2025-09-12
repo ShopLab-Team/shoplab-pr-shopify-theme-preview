@@ -608,15 +608,6 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
   THEME_ID="${EXISTING_THEME_ID}"
   echo "✅ Theme updated successfully"
   
-  # Send Slack notification for successful update
-  STORE_URL="${SHOPIFY_FLAG_STORE}"
-  STORE_URL="${STORE_URL#https://}"
-  STORE_URL="${STORE_URL#http://}"
-  STORE_URL="${STORE_URL%/}"
-  PREVIEW_URL="https://${STORE_URL}?preview_theme_id=${EXISTING_THEME_ID}"
-  
-  send_slack_notification "success" "Theme updated successfully" "${PREVIEW_URL}" "${EXISTING_THEME_ID}"
-  
 else
   # Pull settings from source theme (only on initial creation and if no-sync label is not present)
   if [ "$HAS_NO_SYNC_LABEL" = "true" ]; then

@@ -236,10 +236,12 @@ To receive deployment notifications in Slack:
 ```
 
 You'll receive notifications for:
-- ✅ Successful theme deployments with preview links
-- ⚠️ Themes created with warnings
+- ✅ Initial theme creation with preview links
+- ⚠️ Themes created with warnings  
 - ❌ Failed deployments with error details
 - 🧹 Theme cleanup events
+
+**Note:** Theme updates do not trigger notifications to avoid spam
 
 ### Using Repository JSON Files (no-sync)
 
