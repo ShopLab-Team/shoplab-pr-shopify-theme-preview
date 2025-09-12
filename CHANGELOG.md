@@ -35,8 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Auto-deletion of oldest themes when hitting limit (sorted by last update time)
 - `preserve-theme` label to protect themes from auto-deletion
 - `rebuild-theme` label to recreate deleted themes
+- `no-sync` label to skip pulling settings from production/source theme
 - Retry logic with automatic cleanup when theme creation fails
 - Notification comments when themes are auto-removed
+- **Error Reporting**: Shopify errors are now posted as PR comments for visibility
+- **Slack Integration**: Optional Slack webhook notifications for deployment status
+- **Improved Retry Logic**: When uploads fail, retries use the same theme ID instead of creating duplicates
+- **No-Sync Mode**: Use repository JSON files as-is without pulling from production
 
 ### Changed
 - Simplified action configuration - removed pr-number requirement
@@ -59,7 +64,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Theme performance metrics in PR comments
 - Automatic theme check integration
 - Support for theme preview passwords
-- Webhook notifications for deployment status
 - Theme diff visualization
 - Support for theme migrations
 - Automated testing suite

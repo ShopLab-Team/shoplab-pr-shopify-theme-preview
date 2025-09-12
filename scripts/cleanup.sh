@@ -27,6 +27,56 @@ if [ -z "$PR_TITLE" ]; then
   exit 1
 fi
 
+# Function to send Slack notification
+send_slack_notification() {
+  local status=$1
+  local message=$2
+  local theme_id=$3
+  
+  if [ -z "$SLACK_WEBHOOK_URL" ]; then
+    return 0
+  fi
+  
+  echo "📨 Sending Slack notification..."
+  
+  # Build the Slack message for cleanup
+  local slack_message=$(cat <<EOF
+{
+  "text": "🧹 Shopify Theme Cleanup",
+  "attachments": [
+    {
+      "color": "good",
+      "fields": [
+        {
+          "title": "Repository",
+          "value": "${GITHUB_REPOSITORY}",
+          "short": true
+        },
+        {
+          "title": "PR",
+          "value": "<${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}|#${PR_NUMBER}: ${PR_TITLE}>",
+          "short": true
+        },
+        {
+          "title": "Status",
+          "value": "${message}",
+          "short": false
+        }
+      ],
+      "footer": "Shopify Theme Preview",
+      "ts": $(date +%s)
+    }
+  ]
+}
+EOF
+)
+  
+  # Send to Slack
+  curl -X POST -H 'Content-type: application/json' \
+    --data "$slack_message" \
+    "$SLACK_WEBHOOK_URL" 2>/dev/null || echo "⚠️ Failed to send Slack notification"
+}
+
 # Function to make GitHub API calls
 github_api() {
   local endpoint=$1
@@ -165,6 +215,9 @@ fi
 # Final status
 if [ "$DELETED" = false ]; then
   echo "ℹ️ No theme was deleted (theme may have been manually deleted or never created)"
+  send_slack_notification "info" "No theme found to delete (may have been manually deleted or never created)" ""
+else
+  send_slack_notification "success" "Theme ${THEME_ID:-$THEME_NAME} deleted successfully" "${THEME_ID:-}"
 fi
 
 echo "🎉 Cleanup complete!"

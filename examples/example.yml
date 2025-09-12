@@ -12,6 +12,7 @@ concurrency:
 # Label features:
 # - Add 'rebuild-theme' label to recreate a deleted theme
 # - Add 'preserve-theme' label to protect theme from auto-deletion when hitting Shopify's 20-theme limit
+# - Add 'no-sync' label to skip pulling settings from production/source theme (uses repo JSON files)
 
 jobs:
   manage-theme:
@@ -58,6 +59,7 @@ jobs:
           # source-theme-id: '123456789'  # Theme ID to pull settings from (defaults to live theme)
           # build-command: 'npm run build'  # Command to build assets before deployment
           # node-version: '20'  # Node.js version (defaults to 20)
+          # slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}  # Slack webhook for notifications
 
       - name: Cleanup PR Theme
         if: github.event.action == 'closed'
@@ -68,3 +70,6 @@ jobs:
           shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
           shopify-cli-theme-token: ${{ secrets.SHOPIFY_CLI_THEME_TOKEN }}
           action-type: 'cleanup'
+          
+          # OPTIONAL inputs
+          # slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}  # Slack webhook for notifications

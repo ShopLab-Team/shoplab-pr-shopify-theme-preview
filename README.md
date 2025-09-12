@@ -14,6 +14,9 @@ Automatically deploy and manage Shopify preview themes for pull requests. This G
 - 🧹 **Auto Cleanup** - Deletes themes when PRs are closed or merged
 - 🔒 **Secure** - Built with security best practices
 - 🎯 **Theme Limit Handling** - Automatically manages Shopify's 20-theme limit
+- ⚠️ **Error Reporting** - Posts Shopify errors as PR comments for easy debugging
+- 💬 **Slack Notifications** - Optional Slack webhook integration for deployment status
+- 🔄 **No-Sync Mode** - Option to use repository JSON files without production sync
 
 ## 🎯 Automatic Theme Limit Management
 
@@ -29,6 +32,7 @@ Shopify stores have a limit of 20 development themes. This action automatically 
 ### Label Features:
 - **`preserve-theme`** - Add this label to protect a PR's theme from auto-deletion
 - **`rebuild-theme`** - Add this label to recreate a deleted theme
+- **`no-sync`** - Add this label to skip pulling settings from production/source theme
 
 ### Auto-Removal Notification:
 When a theme is auto-removed, the PR receives this comment:
@@ -145,6 +149,7 @@ jobs:
 | `source-theme-id` | Theme ID to pull settings from | Uses live theme |
 | `build-command` | Command to build assets before deployment | None |
 | `node-version` | Node.js version to use | `20` |
+| `slack-webhook-url` | Slack webhook URL for notifications | None |
 
 ## 🎯 Advanced Usage
 
@@ -211,6 +216,58 @@ If your theme is in a subdirectory:
   working-directory: themes/my-theme
 ```
 
+### With Slack Notifications
+
+To receive deployment notifications in Slack:
+
+1. [Create a Slack Webhook URL](https://api.slack.com/messaging/webhooks)
+2. Add it as a GitHub secret: `SLACK_WEBHOOK_URL`
+3. Include it in your workflow:
+
+```yaml
+- name: Deploy/Update PR Theme
+  uses: ShopLab-Team/shoplab-pr-shopify-theme-preview@v1
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
+    shopify-cli-theme-token: ${{ secrets.SHOPIFY_CLI_THEME_TOKEN }}
+    slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+    action-type: 'deploy'
+```
+
+You'll receive notifications for:
+- ✅ Successful theme deployments with preview links
+- ⚠️ Themes created with warnings
+- ❌ Failed deployments with error details
+- 🧹 Theme cleanup events
+
+### Using Repository JSON Files (no-sync)
+
+By default, the action pulls JSON configuration files from your live/source theme to preserve settings. However, sometimes you want to use the exact JSON files from your repository.
+
+Add the `no-sync` label to your PR to:
+- Skip pulling settings from production/source theme
+- Use JSON files exactly as they are in your repository
+- Deploy the theme with your repo's configuration
+
+**When to use `no-sync` label:**
+- Testing new theme settings or configurations
+- Deploying a completely new theme structure
+- When your repo's JSON files are the source of truth
+- Testing theme migrations or major setting changes
+- Debugging issues related to theme settings
+
+**Example workflow:**
+1. Create PR with theme changes including JSON files
+2. Add `no-sync` label to the PR
+3. Theme deploys with your repo's JSON configuration
+4. Settings from production are NOT pulled/merged
+
+**Note:** When `no-sync` is active:
+- Initial theme creation uses repo JSON files
+- Theme updates push ALL files including JSON
+- No settings preservation occurs
+
 ## 🔧 How It Works
 
 1. **PR Opened**: Creates a new theme using your PR title as the theme name
@@ -219,15 +276,23 @@ If your theme is in a subdirectory:
 
 ### Files Preserved During Updates
 
+**Normal mode (default):**
 - `templates/*.json` - Template settings
 - `sections/*.json` - Section settings
 - `config/settings_data.json` - Theme settings
 - `locales/*.json` - Translations
 - `snippets/*.json` - Snippet configurations
 
-All other files (liquid templates, assets, etc.) are updated with each commit.
+**With `no-sync` label:**
+- No files are preserved
+- All files including JSON are updated from repository
+- Theme uses exact configuration from your codebase
+
+All other files (liquid templates, assets, etc.) are always updated with each commit.
 
 ## 🎨 PR Comment Preview
+
+### Successful Deployment
 
 When deployed, you'll see a comment like:
 
@@ -239,6 +304,37 @@ When deployed, you'll see a comment like:
 > **Theme ID:** `123456789`
 > 
 > This preview theme will be automatically deleted when the PR is closed or merged.
+
+### Deployment with Errors
+
+If Shopify encounters errors but still creates the theme:
+
+> ## ⚠️ Shopify Theme Preview Created with Errors
+> 
+> The theme was created but encountered some issues:
+> 
+> ```
+> templates/page.contact.json: Section type 'contact-us-form' does not refer to an existing section file
+> ```
+> 
+> **Preview URL (may have issues):** https://your-store.myshopify.com?preview_theme_id=123456789  
+> **Theme ID:** `123456789`
+> 
+> Please fix the errors and push a new commit to update the theme.
+
+### Failed Deployment
+
+If theme creation fails completely:
+
+> ## ❌ Shopify Theme Preview Failed
+> 
+> Failed to create the preview theme due to the following error:
+> 
+> ```
+> Theme limit exceeded (maximum 20 themes)
+> ```
+> 
+> Please fix the errors and push a new commit to retry.
 
 ## 🐛 Troubleshooting
 

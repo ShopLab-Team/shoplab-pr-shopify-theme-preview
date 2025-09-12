@@ -30,6 +30,9 @@ fi
 # Initialize variables
 EXISTING_THEME_ID=""
 EXISTING_COMMENT_ID=""
+CREATED_THEME_ID=""
+THEME_ERRORS=""
+THEME_WARNINGS=""
 
 # Function to make GitHub API calls
 github_api() {
@@ -48,6 +51,182 @@ github_api() {
       -H "Content-Type: application/json" \
       ${data:+-d "$data"} \
       "https://api.github.com${endpoint}"
+  fi
+}
+
+# Function to send Slack notification
+send_slack_notification() {
+  local status=$1
+  local message=$2
+  local preview_url=$3
+  local theme_id=$4
+  
+  if [ -z "$SLACK_WEBHOOK_URL" ]; then
+    return 0
+  fi
+  
+  echo "📨 Sending Slack notification..."
+  
+  # Determine emoji and color based on status
+  local emoji=""
+  local color=""
+  case "$status" in
+    "success")
+      emoji="✅"
+      color="good"
+      ;;
+    "warning")
+      emoji="⚠️"
+      color="warning"
+      ;;
+    "error")
+      emoji="❌"
+      color="danger"
+      ;;
+    *)
+      emoji="ℹ️"
+      color="#808080"
+      ;;
+  esac
+  
+  # Build the Slack message
+  local slack_message=""
+  
+  if [ "$status" = "success" ]; then
+    slack_message=$(cat <<EOF
+{
+  "text": "${emoji} Shopify Theme Preview Deployed",
+  "attachments": [
+    {
+      "color": "${color}",
+      "fields": [
+        {
+          "title": "Repository",
+          "value": "${GITHUB_REPOSITORY}",
+          "short": true
+        },
+        {
+          "title": "PR",
+          "value": "<${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}|#${PR_NUMBER}: ${PR_TITLE}>",
+          "short": true
+        },
+        {
+          "title": "Theme ID",
+          "value": "${theme_id}",
+          "short": true
+        },
+        {
+          "title": "Preview URL",
+          "value": "<${preview_url}|View Preview>",
+          "short": true
+        }
+      ],
+      "footer": "Shopify Theme Preview",
+      "ts": $(date +%s)
+    }
+  ]
+}
+EOF
+)
+  else
+    slack_message=$(cat <<EOF
+{
+  "text": "${emoji} Shopify Theme Preview Failed",
+  "attachments": [
+    {
+      "color": "${color}",
+      "fields": [
+        {
+          "title": "Repository",
+          "value": "${GITHUB_REPOSITORY}",
+          "short": true
+        },
+        {
+          "title": "PR",
+          "value": "<${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}|#${PR_NUMBER}: ${PR_TITLE}>",
+          "short": true
+        },
+        {
+          "title": "Error",
+          "value": "${message}",
+          "short": false
+        }
+      ],
+      "footer": "Shopify Theme Preview",
+      "ts": $(date +%s)
+    }
+  ]
+}
+EOF
+)
+  fi
+  
+  # Send to Slack
+  curl -X POST -H 'Content-type: application/json' \
+    --data "$slack_message" \
+    "$SLACK_WEBHOOK_URL" 2>/dev/null || echo "⚠️ Failed to send Slack notification"
+}
+
+# Function to post error comment on PR
+post_error_comment() {
+  local error_message=$1
+  local theme_id=$2
+  
+  echo "💬 Posting error comment to PR..."
+  
+  local comment_body=""
+  
+  if [ -n "$theme_id" ]; then
+    # Theme was created but with errors
+    STORE_URL="${SHOPIFY_FLAG_STORE}"
+    STORE_URL="${STORE_URL#https://}"
+    STORE_URL="${STORE_URL#http://}"
+    STORE_URL="${STORE_URL%/}"
+    PREVIEW_URL="https://${STORE_URL}?preview_theme_id=${theme_id}"
+    
+    comment_body=$(cat <<EOF
+## ⚠️ Shopify Theme Preview Created with Errors
+
+The theme was created but encountered some issues:
+
+\`\`\`
+${error_message}
+\`\`\`
+
+**Preview URL (may have issues):** ${PREVIEW_URL}  
+**Theme ID:** \`${theme_id}\`
+
+Please fix the errors and push a new commit to update the theme.
+
+<!-- THEME_NAME:${THEME_NAME}:ID:${theme_id}:END -->
+EOF
+)
+  else
+    # Theme creation failed completely
+    comment_body=$(cat <<EOF
+## ❌ Shopify Theme Preview Failed
+
+Failed to create the preview theme due to the following error:
+
+\`\`\`
+${error_message}
+\`\`\`
+
+Please fix the errors and push a new commit to retry.
+EOF
+)
+  fi
+  
+  # Escape the comment body for JSON
+  local escaped_body=$(echo "$comment_body" | jq -Rs .)
+  
+  # Post comment
+  local response=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" "POST" "{\"body\":${escaped_body}}")
+  
+  if echo "$response" | grep -q '"id"'; then
+    echo "✅ Error comment posted successfully"
+  else
+    echo "⚠️ Warning: Could not post error comment"
   fi
 }
 
@@ -136,78 +315,186 @@ EOF
   return 1
 }
 
-# Function to create theme with retry on limit
-create_theme_with_retry() {
-  local theme_name="$1"
+# Function to retry theme upload to existing theme
+retry_theme_upload() {
+  local theme_id="$1"
   local max_retries=3
   local retry_count=0
   
+  echo "🔄 Retrying upload to theme ID: ${theme_id}"
+  
   while [ $retry_count -lt $max_retries ]; do
-    echo "🎨 Creating new theme: ${theme_name} (attempt $((retry_count + 1)))"
+    echo "📤 Upload attempt $((retry_count + 1)) of ${max_retries}..."
     
-    # Create new theme - capture output
+    # Try to push to the existing theme
     OUTPUT=$(shopify theme push \
-      --unpublished \
-      --theme "${theme_name}" \
+      --theme "${theme_id}" \
       --nodelete \
       --no-color \
       --json 2>&1)
     
-    # Check if we hit the theme limit
-    if echo "$OUTPUT" | grep -qi "limit\|maximum\|exceeded\|too many"; then
-      echo "⚠️ Theme limit error detected"
-      
-      if [ $retry_count -eq 0 ]; then
-        # First attempt - try to clean up old themes
-        if handle_theme_limit; then
-          echo "🔄 Retrying theme creation after cleanup..."
-          retry_count=$((retry_count + 1))
-          sleep 2
-          continue
-        else
-          echo "❌ Could not free up theme slots"
-          return 1
-        fi
-      fi
-    fi
-    
-    # Try to extract theme ID
-    THEME_ID=$(echo "$OUTPUT" | node -e '
-      let data = "";
-      process.stdin.on("data", chunk => data += chunk);
-      process.stdin.on("end", () => {
-        try {
-          const json = JSON.parse(data);
-          const themeId = json.theme?.id || "";
-          process.stdout.write(String(themeId));
-        } catch (e) {
-          // If JSON parsing fails, try to extract from regular output
-          const match = data.match(/Theme ID: (\d+)/);
-          if (match) {
-            process.stdout.write(match[1]);
-          }
-        }
-      });
-    ' 2>/dev/null || echo "")
-    
-    if [ -n "${THEME_ID}" ] && [ "${THEME_ID}" != "null" ]; then
-      echo "✅ Theme created with ID: ${THEME_ID}"
-      # Export THEME_ID so it's available to the caller
-      export THEME_ID
+    # Check if upload was successful
+    if echo "$OUTPUT" | grep -q '"errors":\s*{}' || ! echo "$OUTPUT" | grep -q '"errors"'; then
+      echo "✅ Theme updated successfully"
       return 0
     fi
     
     retry_count=$((retry_count + 1))
     if [ $retry_count -lt $max_retries ]; then
-      echo "⚠️ Theme creation failed, retrying in 3 seconds..."
+      echo "⚠️ Upload failed, retrying in 3 seconds..."
       sleep 3
     fi
   done
   
-  echo "❌ Failed to create theme after ${max_retries} attempts"
+  echo "❌ Failed to upload to theme after ${max_retries} attempts"
   echo "Last output: $OUTPUT"
   return 1
 }
+
+# Function to create theme with retry on limit
+create_theme_with_retry() {
+  local theme_name="$1"
+  local max_retries=3
+  local retry_count=0
+  local theme_created=false
+  
+  while [ $retry_count -lt $max_retries ]; do
+    if [ "$theme_created" = false ]; then
+      echo "🎨 Creating new theme: ${theme_name} (attempt $((retry_count + 1)))"
+      
+      # Create new theme - capture output
+      OUTPUT=$(shopify theme push \
+        --unpublished \
+        --theme "${theme_name}" \
+        --nodelete \
+        --no-color \
+        --json 2>&1)
+      
+      # Check if we hit the theme limit
+      if echo "$OUTPUT" | grep -qi "limit\|maximum\|exceeded\|too many"; then
+        echo "⚠️ Theme limit error detected"
+        
+        if [ $retry_count -eq 0 ]; then
+          # First attempt - try to clean up old themes
+          if handle_theme_limit; then
+            echo "🔄 Retrying theme creation after cleanup..."
+            retry_count=$((retry_count + 1))
+            sleep 2
+            continue
+          else
+            echo "❌ Could not free up theme slots"
+            return 1
+          fi
+        fi
+      fi
+      
+      # Try to extract theme ID (theme might be created even with errors)
+      THEME_ID=$(echo "$OUTPUT" | node -e '
+        let data = "";
+        process.stdin.on("data", chunk => data += chunk);
+        process.stdin.on("end", () => {
+          try {
+            const json = JSON.parse(data);
+            const themeId = json.theme?.id || "";
+            process.stdout.write(String(themeId));
+          } catch (e) {
+            // If JSON parsing fails, try to extract from regular output
+            const match = data.match(/Theme ID: (\d+)/);
+            if (match) {
+              process.stdout.write(match[1]);
+            }
+          }
+        });
+      ' 2>/dev/null || echo "")
+      
+      if [ -n "${THEME_ID}" ] && [ "${THEME_ID}" != "null" ]; then
+        theme_created=true
+        CREATED_THEME_ID="${THEME_ID}"
+        echo "✅ Theme created with ID: ${THEME_ID}"
+        
+        # Check for errors or warnings in the output
+        if echo "$OUTPUT" | grep -q '"errors"' || echo "$OUTPUT" | grep -q '"warning"'; then
+          # Extract errors/warnings
+          THEME_ERRORS=$(echo "$OUTPUT" | node -e '
+            let data = "";
+            process.stdin.on("data", chunk => data += chunk);
+            process.stdin.on("end", () => {
+              try {
+                const json = JSON.parse(data);
+                if (json.theme?.errors) {
+                  const errors = Object.entries(json.theme.errors)
+                    .map(([file, msgs]) => `${file}: ${msgs.join(", ")}`)
+                    .join("\n");
+                  process.stdout.write(errors);
+                } else if (json.theme?.warning) {
+                  process.stdout.write(json.theme.warning);
+                }
+              } catch (e) {
+                // Fallback to raw output
+                process.stdout.write(data);
+              }
+            });
+          ' 2>/dev/null || echo "$OUTPUT")
+          
+          echo "⚠️ Theme created with errors/warnings:"
+          echo "$THEME_ERRORS"
+          
+          # Don't retry if theme was created, even with errors
+          export THEME_ID
+          export THEME_ERRORS
+          return 0
+        else
+          # Theme created successfully without errors
+          export THEME_ID
+          return 0
+        fi
+      fi
+    else
+      # Theme already created, just retry the upload
+      if retry_theme_upload "${CREATED_THEME_ID}"; then
+        THEME_ID="${CREATED_THEME_ID}"
+        export THEME_ID
+        return 0
+      fi
+    fi
+    
+    retry_count=$((retry_count + 1))
+    if [ $retry_count -lt $max_retries ]; then
+      echo "⚠️ Operation failed, retrying in 3 seconds..."
+      sleep 3
+    fi
+  done
+  
+  echo "❌ Failed to create/upload theme after ${max_retries} attempts"
+  echo "Last output: $OUTPUT"
+  
+  # Post error comment and send Slack notification if theme creation failed completely
+  if [ "$theme_created" = false ]; then
+    post_error_comment "${OUTPUT}" ""
+    send_slack_notification "error" "Failed to create theme: ${OUTPUT}" "" ""
+  else
+    # Theme was created but uploads failed
+    post_error_comment "${THEME_ERRORS}" "${CREATED_THEME_ID}"
+    STORE_URL="${SHOPIFY_FLAG_STORE}"
+    STORE_URL="${STORE_URL#https://}"
+    STORE_URL="${STORE_URL#http://}"
+    STORE_URL="${STORE_URL%/}"
+    PREVIEW_URL="https://${STORE_URL}?preview_theme_id=${CREATED_THEME_ID}"
+    send_slack_notification "warning" "Theme created with errors: ${THEME_ERRORS}" "${PREVIEW_URL}" "${CREATED_THEME_ID}"
+  fi
+  
+  return 1
+}
+
+# Check if PR has no-sync label
+HAS_NO_SYNC_LABEL="false"
+if [ -n "$PR_LABELS" ]; then
+  # Parse the JSON array of labels
+  if echo "$PR_LABELS" | grep -q '"no-sync"'; then
+    HAS_NO_SYNC_LABEL="true"
+    echo "🔒 Found 'no-sync' label - will skip pulling theme settings"
+  fi
+fi
 
 # Sanitize PR title for theme name
 THEME_NAME=$(printf '%s' "$PR_TITLE" | \
@@ -257,74 +544,142 @@ fi
 if [ -n "${EXISTING_THEME_ID}" ]; then
   echo "🔄 Updating existing theme ID: ${EXISTING_THEME_ID}"
   
-  # Update existing theme, excluding JSON files to preserve settings
-  shopify theme push \
-    --theme "${EXISTING_THEME_ID}" \
-    --nodelete \
-    --no-color \
-    --ignore "templates/*.json" \
-    --ignore "sections/*.json" \
-    --ignore "config/settings_data.json" \
-    --ignore "locales/*.json" \
-    --ignore "snippets/*.json" \
-    --ignore "*.json" 2>&1 | while IFS= read -r line; do
-      # Filter out noisy output but keep important messages
-      if [[ ! "$line" =~ "Pushing theme files to" ]] && \
-         [[ ! "$line" =~ "Theme pushed successfully" ]]; then
-        echo "$line"
-      fi
-    done
+  # Build the update command based on no-sync label
+  if [ "$HAS_NO_SYNC_LABEL" = "true" ]; then
+    echo "📄 Pushing all files including JSON (no-sync mode)"
+    # Update theme including JSON files from the repository
+    UPDATE_OUTPUT=$(shopify theme push \
+      --theme "${EXISTING_THEME_ID}" \
+      --nodelete \
+      --no-color \
+      --json 2>&1)
+  else
+    echo "💾 Preserving theme settings (normal mode)"
+    # Update existing theme, excluding JSON files to preserve settings
+    UPDATE_OUTPUT=$(shopify theme push \
+      --theme "${EXISTING_THEME_ID}" \
+      --nodelete \
+      --no-color \
+      --ignore "templates/*.json" \
+      --ignore "sections/*.json" \
+      --ignore "config/settings_data.json" \
+      --ignore "locales/*.json" \
+      --ignore "snippets/*.json" \
+      --ignore "*.json" \
+      --json 2>&1)
+  fi
+  
+  UPDATE_SUCCESS=$?
+  
+  # Check for errors in update
+  if [ $UPDATE_SUCCESS -ne 0 ] || echo "$UPDATE_OUTPUT" | grep -q '"errors"'; then
+    echo "⚠️ Theme update encountered errors"
+    THEME_ERRORS=$(echo "$UPDATE_OUTPUT" | node -e '
+      let data = "";
+      process.stdin.on("data", chunk => data += chunk);
+      process.stdin.on("end", () => {
+        try {
+          const json = JSON.parse(data);
+          if (json.theme?.errors) {
+            const errors = Object.entries(json.theme.errors)
+              .map(([file, msgs]) => `${file}: ${msgs.join(", ")}`)
+              .join("\n");
+            process.stdout.write(errors);
+          } else {
+            process.stdout.write(data);
+          }
+        } catch (e) {
+          process.stdout.write(data);
+        }
+      });
+    ' 2>/dev/null || echo "$UPDATE_OUTPUT")
+    
+    post_error_comment "${THEME_ERRORS}" "${EXISTING_THEME_ID}"
+    
+    STORE_URL="${SHOPIFY_FLAG_STORE}"
+    STORE_URL="${STORE_URL#https://}"
+    STORE_URL="${STORE_URL#http://}"
+    STORE_URL="${STORE_URL%/}"
+    PREVIEW_URL="https://${STORE_URL}?preview_theme_id=${EXISTING_THEME_ID}"
+    
+    send_slack_notification "warning" "Theme update failed: ${THEME_ERRORS}" "${PREVIEW_URL}" "${EXISTING_THEME_ID}"
+    exit 1
+  fi
   
   THEME_ID="${EXISTING_THEME_ID}"
   echo "✅ Theme updated successfully"
   
 else
-  # Pull settings from source theme (only on initial creation)
-  if [ -n "${SOURCE_THEME_ID}" ]; then
-    echo "📥 Pulling settings from theme ID: ${SOURCE_THEME_ID}"
-    THEME_SELECTOR="--theme ${SOURCE_THEME_ID}"
+  # Pull settings from source theme (only on initial creation and if no-sync label is not present)
+  if [ "$HAS_NO_SYNC_LABEL" = "true" ]; then
+    echo "⏭️ Skipping theme settings pull due to 'no-sync' label"
+    echo "📄 Using JSON files from repository as-is"
   else
-    echo "📥 No source theme specified, pulling from live theme"
-    THEME_SELECTOR="--live"
+    if [ -n "${SOURCE_THEME_ID}" ]; then
+      echo "📥 Pulling settings from theme ID: ${SOURCE_THEME_ID}"
+      THEME_SELECTOR="--theme ${SOURCE_THEME_ID}"
+    else
+      echo "📥 No source theme specified, pulling from live theme"
+      THEME_SELECTOR="--live"
+    fi
+    
+    echo "⬇️ Pulling JSON configuration files..."
+    shopify theme pull \
+      ${THEME_SELECTOR} \
+      --only "templates/*.json" \
+      --only "sections/*.json" \
+      --only "config/settings_data.json" \
+      --only "locales/*.json" \
+      --only "snippets/*.json" \
+      --nodelete \
+      --no-color 2>&1 | while IFS= read -r line; do
+        # Filter out noisy output
+        if [[ ! "$line" =~ "Pulling theme files from" ]] && \
+           [[ ! "$line" =~ "Theme pulled successfully" ]]; then
+          echo "$line"
+        fi
+      done || echo "⚠️ Warning: Could not pull all settings files (this is okay if some don't exist)"
   fi
-  
-  echo "⬇️ Pulling JSON configuration files..."
-  shopify theme pull \
-    ${THEME_SELECTOR} \
-    --only "templates/*.json" \
-    --only "sections/*.json" \
-    --only "config/settings_data.json" \
-    --only "locales/*.json" \
-    --only "snippets/*.json" \
-    --nodelete \
-    --no-color 2>&1 | while IFS= read -r line; do
-      # Filter out noisy output
-      if [[ ! "$line" =~ "Pulling theme files from" ]] && \
-         [[ ! "$line" =~ "Theme pulled successfully" ]]; then
-        echo "$line"
-      fi
-    done || echo "⚠️ Warning: Could not pull all settings files (this is okay if some don't exist)"
   
   # Use the retry function to create theme
   if create_theme_with_retry "${THEME_NAME}"; then
     # THEME_ID is set by the function
     echo "🎆 Theme creation successful!"
-  else
-    echo "❌ Failed to create theme"
-    exit 1
-  fi
-  
-  # Generate preview URL
-  STORE_URL="${SHOPIFY_FLAG_STORE}"
-  STORE_URL="${STORE_URL#https://}"
-  STORE_URL="${STORE_URL#http://}"
-  STORE_URL="${STORE_URL%/}"
-  PREVIEW_URL="https://${STORE_URL}?preview_theme_id=${THEME_ID}"
-  
-  echo "🔗 Preview URL: ${PREVIEW_URL}"
-  
-  # Create the comment body with proper JSON escaping
-  COMMENT_BODY=$(cat <<EOF
+    
+    # Generate preview URL
+    STORE_URL="${SHOPIFY_FLAG_STORE}"
+    STORE_URL="${STORE_URL#https://}"
+    STORE_URL="${STORE_URL#http://}"
+    STORE_URL="${STORE_URL%/}"
+    PREVIEW_URL="https://${STORE_URL}?preview_theme_id=${THEME_ID}"
+    
+    echo "🔗 Preview URL: ${PREVIEW_URL}"
+    
+    # Create the comment body
+    if [ -n "$THEME_ERRORS" ]; then
+      # Theme created with warnings/errors
+      COMMENT_BODY=$(cat <<EOF
+## ⚠️ Shopify Theme Preview Created with Warnings
+
+**Preview your changes:** ${PREVIEW_URL}
+
+**Theme:** ${THEME_NAME}  
+**Theme ID:** \`${THEME_ID}\`
+
+The theme was created but encountered some issues:
+\`\`\`
+${THEME_ERRORS}
+\`\`\`
+
+This preview theme will be automatically deleted when the PR is closed or merged.
+
+<!-- THEME_NAME:${THEME_NAME}:ID:${THEME_ID}:END -->
+EOF
+)
+      send_slack_notification "warning" "Theme created with warnings" "${PREVIEW_URL}" "${THEME_ID}"
+    else
+      # Theme created successfully
+      COMMENT_BODY=$(cat <<EOF
 ## 🚀 Shopify Theme Preview
 
 **Preview your changes:** ${PREVIEW_URL}
@@ -337,19 +692,25 @@ This preview theme will be automatically deleted when the PR is closed or merged
 <!-- THEME_NAME:${THEME_NAME}:ID:${THEME_ID}:END -->
 EOF
 )
-  
-  # Escape the comment body for JSON
-  ESCAPED_BODY=$(echo "$COMMENT_BODY" | jq -Rs .)
-  
-  # Post comment with preview URL
-  echo "💬 Posting preview comment..."
-  RESPONSE=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" "POST" "{\"body\":${ESCAPED_BODY}}")
-  
-  if echo "$RESPONSE" | grep -q '"id"'; then
-    echo "✅ Preview comment posted successfully"
+      send_slack_notification "success" "Theme deployed successfully" "${PREVIEW_URL}" "${THEME_ID}"
+    fi
+    
+    # Escape the comment body for JSON
+    ESCAPED_BODY=$(echo "$COMMENT_BODY" | jq -Rs .)
+    
+    # Post comment with preview URL
+    echo "💬 Posting preview comment..."
+    RESPONSE=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" "POST" "{\"body\":${ESCAPED_BODY}}")
+    
+    if echo "$RESPONSE" | grep -q '"id"'; then
+      echo "✅ Preview comment posted successfully"
+    else
+      echo "⚠️ Warning: Could not post comment, but theme was created successfully"
+      echo "Response: $RESPONSE"
+    fi
   else
-    echo "⚠️ Warning: Could not post comment, but theme was created successfully"
-    echo "Response: $RESPONSE"
+    echo "❌ Failed to create theme"
+    exit 1
   fi
 fi
 

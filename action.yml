@@ -30,6 +30,10 @@ inputs:
     description: 'Node.js version to use (optional)'
     required: false
     default: '20'
+  slack-webhook-url:
+    description: 'Slack webhook URL for notifications (optional)'
+    required: false
+    default: ''
 
 outputs:
   theme-id:
@@ -79,7 +83,11 @@ runs:
         BUILD_COMMAND: ${{ inputs.build-command }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
         ACTION_TYPE: ${{ inputs.action-type }}
+        SLACK_WEBHOOK_URL: ${{ inputs.slack-webhook-url }}
+        GITHUB_SERVER_URL: ${{ github.server_url }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
       run: |
         if [ "$ACTION_TYPE" == "deploy" ]; then
           ${{ github.action_path }}/scripts/deploy.sh
