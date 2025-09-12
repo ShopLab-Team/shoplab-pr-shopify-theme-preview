@@ -70,22 +70,32 @@ send_slack_notification() {
   # Determine emoji and color based on status
   local emoji=""
   local color=""
+  local action_text=""
   case "$status" in
     "success")
       emoji="✅"
       color="good"
+      # Determine if this is creation or update based on message
+      if echo "$message" | grep -qi "update"; then
+        action_text="Theme Updated"
+      else
+        action_text="Theme Deployed"
+      fi
       ;;
     "warning")
       emoji="⚠️"
       color="warning"
+      action_text="Theme Created with Warnings"
       ;;
     "error")
       emoji="❌"
       color="danger"
+      action_text="Theme Deployment Failed"
       ;;
     *)
       emoji="ℹ️"
       color="#808080"
+      action_text="Theme Status"
       ;;
   esac
   
@@ -95,7 +105,7 @@ send_slack_notification() {
   if [ "$status" = "success" ]; then
     slack_message=$(cat <<EOF
 {
-  "text": "${emoji} Shopify Theme Preview Deployed",
+  "text": "${emoji} Shopify ${action_text}",
   "attachments": [
     {
       "color": "${color}",
@@ -597,6 +607,15 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
   
   THEME_ID="${EXISTING_THEME_ID}"
   echo "✅ Theme updated successfully"
+  
+  # Send Slack notification for successful update
+  STORE_URL="${SHOPIFY_FLAG_STORE}"
+  STORE_URL="${STORE_URL#https://}"
+  STORE_URL="${STORE_URL#http://}"
+  STORE_URL="${STORE_URL%/}"
+  PREVIEW_URL="https://${STORE_URL}?preview_theme_id=${EXISTING_THEME_ID}"
+  
+  send_slack_notification "success" "Theme updated successfully" "${PREVIEW_URL}" "${EXISTING_THEME_ID}"
   
 else
   # Pull settings from source theme (only on initial creation and if no-sync label is not present)
