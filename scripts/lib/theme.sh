@@ -25,7 +25,7 @@ check_theme_exists_by_name() {
   local theme_name="$1"
   local theme_list
   
-  echo "🔍 Checking if theme with name '${theme_name}' exists in Shopify store..."
+  echo "🔍 Checking if theme with name '${theme_name}' exists in Shopify store..." >&2
   
   if ! theme_list=$(shopify theme list --json 2>/dev/null); then
     echo "⚠️ Could not retrieve theme list from Shopify"
@@ -219,72 +219,65 @@ EOF
 # Function to upload theme to Shopify
 upload_theme() {
   local theme_id=$1
-  local max_retries=3
-  local retry_count=0
+  local status=0
+  local parsed_json
+  local error_count
+  local warning_message
   
   THEME_ERRORS=""
   LAST_UPLOAD_OUTPUT=""
   
-  while [ $retry_count -lt $max_retries ]; do
-    echo "📤 Uploading theme (attempt $((retry_count + 1))/${max_retries})..."
-    
-    local status=0
-    set +e
-    OUTPUT=$(shopify theme push \
-      --theme "$theme_id" \
-      --nodelete \
-      --no-color \
-      --json 2>&1)
-    status=$?
-    set -e
-    
-    LAST_UPLOAD_OUTPUT="$OUTPUT"
-    
-    # Try to parse JSON response
-    local parsed_json
-    parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}$' | tail -1 || echo "")
-    if [ -z "$parsed_json" ]; then
-      parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}' | tail -1 || echo "")
-    fi
+  echo "📤 Uploading theme to ID: ${theme_id}..."
+  
+  set +e
+  OUTPUT=$(shopify theme push \
+    --theme "$theme_id" \
+    --nodelete \
+    --no-color \
+    --json 2>&1)
+  status=$?
+  set -e
+  
+  LAST_UPLOAD_OUTPUT="$OUTPUT"
+  
+  # Try to parse JSON response
+  parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}$' | tail -1 || echo "")
+  if [ -z "$parsed_json" ]; then
+    parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}' | tail -1 || echo "")
+  fi
 
-    if [ $status -eq 0 ]; then
-      if [ -n "$parsed_json" ]; then
-        local error_count
-        error_count=$(echo "$parsed_json" | extract_json_value "" "error_count")
-        local warning_message
-        warning_message=$(echo "$parsed_json" | extract_json_value "" "warning")
+  if [ $status -eq 0 ]; then
+    if [ -n "$parsed_json" ]; then
+      error_count=$(echo "$parsed_json" | extract_json_value "" "error_count")
+      warning_message=$(echo "$parsed_json" | extract_json_value "" "warning")
 
-        if [ "$error_count" -eq 0 ]; then
-          if [ -n "$warning_message" ] && [ "$warning_message" != "null" ]; then
-            THEME_ERRORS="$warning_message"
-            export THEME_ERRORS
-          fi
-          echo "✅ Theme updated successfully"
-          return 0
+      if [ "$error_count" -eq 0 ]; then
+        if [ -n "$warning_message" ] && [ "$warning_message" != "null" ]; then
+          THEME_ERRORS="$warning_message"
+          export THEME_ERRORS
         fi
-
-        THEME_ERRORS=$(echo "$parsed_json" | extract_json_value "" "format_errors")
-        [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$OUTPUT"
-        retry_count=$max_retries
-        break
-      else
         echo "✅ Theme updated successfully"
         return 0
+      else
+        THEME_ERRORS=$(echo "$parsed_json" | extract_json_value "" "format_errors")
+        [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$OUTPUT"
+        echo "❌ Theme upload failed with validation errors"
+        return 1
       fi
     else
-      THEME_ERRORS="$OUTPUT"
+      echo "✅ Theme updated successfully (no JSON response, assuming success)"
+      return 0
     fi
-
-    retry_count=$((retry_count + 1))
-    if [ $retry_count -lt $max_retries ]; then
-      echo "⚠️ Upload failed, retrying in 3 seconds..."
-      sleep 3
+  else
+    THEME_ERRORS="$OUTPUT"
+    # Check for "doesn't exist" or "not found" errors
+    if echo "$OUTPUT" | grep -qi "doesn't exist\|not found"; then
+      echo "❌ Theme ID ${theme_id} no longer exists on Shopify. Cannot update."
+      return 1
     fi
-  done
-  
-  echo "❌ Failed to upload to theme after ${max_retries} attempts"
-  echo "Last output: $LAST_UPLOAD_OUTPUT"
-  return 1
+    echo "❌ Theme upload failed"
+    return 1
+  fi
 }
 
 # Function to create theme (NO RETRY for validation errors)

@@ -61,11 +61,11 @@ else
   ticket_ref=$(echo "$PR_TITLE" | grep -oE '\[?[A-Z]+-[0-9]+\]?' | head -1 | tr -d '[]')
   
   # Sanitize the title: keep alphanumeric, space, dash, underscore, dot, brackets
-  THEME_NAME=$(printf '%s' "$PR_TITLE" | \
-    tr -cd '[:alnum:][:space:]-_.[]' | \
-    sed -E 's/[[:space:]]+/ /g' | \
-    sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | \
-    cut -c1-50)
+THEME_NAME=$(printf '%s' "$PR_TITLE" | \
+  tr -cd '[:alnum:][:space:]-_.[]' | \
+  sed -E 's/[[:space:]]+/ /g' | \
+  sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | \
+  cut -c1-50)
   
   # If sanitization resulted in empty string, use ticket reference or fallback
   if [ -z "$THEME_NAME" ]; then
@@ -171,7 +171,7 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
       echo "📥 No source theme specified, pulling from live theme"
       THEME_SELECTOR="--live"
     fi
-
+    
     echo "⬇️ Pulling JSON configuration files..."
     
     # Pull only JSON files to preserve settings
@@ -251,7 +251,6 @@ ${CLEANED_ERRORS}
       echo "❌ Failed to update existing theme"
       post_error_comment "$THEME_ERRORS" "$EXISTING_THEME_ID"
       
-      local cleaned_errors
       cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
       send_slack_notification "error" "Failed to update existing theme:\n${cleaned_errors}" "" "$EXISTING_THEME_ID"
       exit 1
@@ -325,7 +324,6 @@ else
       post_error_comment "$THEME_ERRORS" ""
       
       # Adjust error message to indicate cleanup was successful
-      local cleaned_errors
       cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
       send_slack_notification "error" "Theme creation failed:\n${cleaned_errors}\n\nThe failed theme has been cleaned up." "" ""
     else
@@ -335,16 +333,15 @@ else
       post_error_comment "$THEME_ERRORS" "$CREATED_THEME_ID"
       
       # Include preview URL in Slack notification since theme exists
-      local preview_url=""
+      preview_url=""
       if [ -n "$CREATED_THEME_ID" ]; then
-        local store_url="${SHOPIFY_FLAG_STORE}"
+        store_url="${SHOPIFY_FLAG_STORE}"
         store_url="${store_url#https://}"
         store_url="${store_url#http://}"
         store_url="${store_url%/}"
         preview_url="https://${store_url}?preview_theme_id=${CREATED_THEME_ID}"
       fi
       
-      local cleaned_errors
       cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
       send_slack_notification "error" "Theme creation failed:\n${cleaned_errors}\n\n⚠️ Failed theme ${CREATED_THEME_ID} could not be cleaned up - manual cleanup required!" "$preview_url" "$CREATED_THEME_ID"
     fi
@@ -352,7 +349,6 @@ else
     # No theme was created at all
     post_error_comment "$THEME_ERRORS" ""
     
-    local cleaned_errors
     cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
     send_slack_notification "error" "Theme creation failed:\n${cleaned_errors}" "" ""
   fi
