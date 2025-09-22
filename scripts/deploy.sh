@@ -4,6 +4,13 @@ set -e
 # Deployment script for Shopify PR Theme Preview Action
 # This script handles both creating new themes and updating existing ones
 
+# Source library functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/common.sh" && COMMON_UTILS_LOADED=1
+source "${SCRIPT_DIR}/lib/github.sh" && GITHUB_API_LOADED=1
+source "${SCRIPT_DIR}/lib/slack.sh" && SLACK_API_LOADED=1
+source "${SCRIPT_DIR}/lib/theme.sh" && THEME_API_LOADED=1
+
 echo "🚀 Starting Shopify PR Theme deployment..."
 
 # Check required environment variables
@@ -37,911 +44,10 @@ THEME_WARNINGS=""
 LAST_DELETE_OUTPUT=""
 LAST_UPLOAD_OUTPUT=""
 
-truncate_for_slack() {
-  local input="$1"
-  local max_length="${2:-400}"
-  local truncated="$input"
-  if [ "${#input}" -gt "$max_length" ]; then
-    truncated="${input:0:max_length}…"
-  fi
-  printf '%s' "$truncated"
-}
-
-clean_for_slack() {
-  local input="$1"
-  # Remove box drawing characters and ANSI escape codes
-  # Extract meaningful content from Shopify CLI output
-  local cleaned
-  cleaned=$(printf '%s' "$input" | \
-    awk '{
-      # Remove box drawing characters
-      gsub(/[╭╮╰╯─│║┃┊┋╎╏]/, " ");
-      # Remove ANSI escape codes
-      gsub(/\x1b\[[0-9;]*[mGKH]/, "");
-      # Trim leading and trailing whitespace
-      gsub(/^[ \t]+|[ \t]+$/, "");
-      # Collapse multiple spaces
-      gsub(/  +/, " ");
-      # Replace standalone "error" with "Error:"
-      if ($0 == "error") $0 = "Error:";
-      # Print non-empty lines
-      if (length($0) > 0) print $0
-    }')
-  
-  printf '%s' "$cleaned"
-}
-
-# Helper function: Parse JSON using Node.js instead of jq
-parse_json() {
-  local json_input="$1"
-  local json_path="$2"
-  local default_value="${3:-}"
-  
-  echo "$json_input" | node -e "
-    const data = require('fs').readFileSync(0, 'utf8');
-    if (!data.trim()) {
-      console.log('$default_value');
-      process.exit(0);
-    }
-    try {
-      const obj = JSON.parse(data);
-      const path = '$json_path'.split('.');
-      let result = obj;
-      for (const key of path) {
-        if (key && result != null) {
-          result = result[key];
-        }
-      }
-      console.log(result != null ? result : '$default_value');
-    } catch (error) {
-      console.log('$default_value');
-    }
-  " 2>/dev/null || echo "$default_value"
-}
-
-# Helper function: Safe JSON extraction with specific queries
-extract_json_value() {
-  local json_input="$1"
-  local extraction_type="$2"
-  
-  # If json_input is empty, read from stdin
-  if [ -z "$json_input" ]; then
-    json_input=$(cat)
-  fi
-  
-  case "$extraction_type" in
-    "theme_id")
-      echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log((o.theme?.id)||'');}catch(e){console.log('');}"
-      ;;
-    "error_count")
-      echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log((o.theme?.errors)?Object.keys(o.theme.errors).length:0);}catch(e){console.log('0');}"
-      ;;
-    "warning")
-      echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(o.theme?.warning||'');}catch(e){console.log('');}"
-      ;;
-    "format_errors")
-      echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));const e=o.theme?.errors||{};const l=Object.entries(e).map(([k,v])=>'• '+k+': '+(Array.isArray(v)?v.join(', '):v));console.log(l.join('\\n'));}catch(e){console.log('');}"
-      ;;
-    *)
-      echo ""
-      ;;
-  esac
-}
-
-# Helper function: extract the most recent theme marker from PR comments
-extract_latest_theme_marker() {
-  local input_json
-  input_json=$(cat)
-
-  COMMENTS_JSON="$input_json" node - <<'NODE'
-const data = process.env.COMMENTS_JSON || "";
-if (!data.trim()) {
-  process.exit(0);
-}
-
-let comments;
-try {
-  comments = JSON.parse(data);
-} catch (error) {
-  process.exit(0);
-}
-
-// Collect all theme markers from all comments with their creation timestamps
-const allMarkers = [];
-const markerRegex = /<!-- THEME_NAME:(.+?):ID:(\d+):END -->/g;
-
-for (const comment of comments) {
-  if (!comment || typeof comment.body !== "string") {
-    continue;
-  }
-  
-  // Use created_at for when the comment (and theme) was actually created
-  // Don't use updated_at as edits to comments shouldn't affect theme order
-  const timestamp = comment.created_at || "";
-  
-  let match;
-  markerRegex.lastIndex = 0; // Reset regex state
-  while ((match = markerRegex.exec(comment.body)) !== null) {
-    allMarkers.push({
-      name: match[1],
-      id: match[2],
-      timestamp: timestamp
-    });
-  }
-}
-
-// If no markers found, exit
-if (allMarkers.length === 0) {
-  process.exit(0);
-}
-
-// Sort markers by creation timestamp (newest first)
-allMarkers.sort((a, b) => {
-  const aTime = new Date(a.timestamp || 0);
-  const bTime = new Date(b.timestamp || 0);
-  return bTime - aTime; // Descending order (newest first)
-});
-
-// Return the most recently created theme marker
-const latest = allMarkers[0];
-process.stdout.write(`${latest.name}|${latest.id}`);
-NODE
-}
-
-# Helper function: delete a theme by ID while capturing CLI output
-delete_theme_by_id() {
-  local theme_id="$1"
-  local output=""
-  local status=0
-
-  set +e
-  output=$(shopify theme delete -t "${theme_id}" --force 2>&1)
-  status=$?
-  set -e
-
-  LAST_DELETE_OUTPUT="$output"
-
-  if [ $status -eq 0 ]; then
-    return 0
-  fi
-
-  if echo "$output" | grep -qi 'No themes' || echo "$output" | grep -qi 'not found'; then
-    return 2
-  fi
-
-  return 1
-}
-
-cleanup_failed_theme() {
-  local theme_id="$1"
-  if [ -z "$theme_id" ]; then
-    return 0
-  fi
-
-  echo "🧹 Cleaning up failed theme ${theme_id}"
-  if delete_theme_by_id "$theme_id"; then
-    echo "✅ Failed theme ${theme_id} removed"
-    return 0
-  fi
-
-  local delete_status=$?
-  if [ $delete_status -ne 2 ]; then
-    echo "$LAST_DELETE_OUTPUT"
-  fi
-  echo "⚠️ Could not remove failed theme ${theme_id}"
-  return 1
-}
-
-# Function to make GitHub API calls with retry and timeout
-github_api() {
-  local endpoint=$1
-  local method=${2:-GET}
-  local data=$3
-  local max_retries=3
-  local retry_count=0
-  local timeout=30
-  
-  while [ $retry_count -lt $max_retries ]; do
-    local response
-    local status_code
-    
-    if [ "$method" = "GET" ]; then
-      response=$(curl -s -w "\n%{http_code}" --connect-timeout 10 --max-time $timeout \
-        -H "Authorization: token ${GITHUB_TOKEN}" \
-        -H "Accept: application/vnd.github.v3+json" \
-        "https://api.github.com${endpoint}" 2>/dev/null)
-    else
-      response=$(curl -s -w "\n%{http_code}" --connect-timeout 10 --max-time $timeout \
-        -X "$method" \
-        -H "Authorization: token ${GITHUB_TOKEN}" \
-        -H "Accept: application/vnd.github.v3+json" \
-        -H "Content-Type: application/json" \
-        ${data:+-d "$data"} \
-        "https://api.github.com${endpoint}" 2>/dev/null)
-    fi
-    
-    # Extract status code from the last line
-    status_code=$(echo "$response" | tail -1)
-    # Remove status code from response
-    response=$(echo "$response" | sed '$d')
-    
-    # Check for success (2xx status codes)
-    if [[ "$status_code" =~ ^2[0-9][0-9]$ ]]; then
-      echo "$response"
-      return 0
-    fi
-    
-    # Check for rate limiting
-    if [ "$status_code" = "403" ] || [ "$status_code" = "429" ]; then
-      echo "⚠️ GitHub API rate limit hit, waiting 60 seconds..." >&2
-      sleep 60
-      retry_count=$((retry_count + 1))
-      continue
-    fi
-    
-    # For other errors, retry with exponential backoff
-    retry_count=$((retry_count + 1))
-    if [ $retry_count -lt $max_retries ]; then
-      local wait_time=$((2 ** retry_count))
-      echo "⚠️ GitHub API error (status: ${status_code}), retrying in ${wait_time} seconds..." >&2
-      sleep $wait_time
-    else
-      echo "❌ GitHub API request failed after ${max_retries} attempts (status: ${status_code})" >&2
-      return 1
-    fi
-  done
-  
-  return 1
-}
-
-# Function to send Slack notification
-send_slack_notification() {
-  local status=$1
-  local message=$2
-  local preview_url=$3
-  local theme_id=$4
-
-  if [ -z "$SLACK_WEBHOOK_URL" ]; then
-    return 0
-  fi
-
-  echo "📨 Sending Slack notification..."
-
-  # Determine emoji, color, and contextual text based on status
-  local emoji=""
-  local color=""
-  local action_text=""
-  local status_field_title="Status"
-
-  case "$status" in
-    "success")
-      emoji="✅"
-      color="good"
-      if echo "$message" | grep -qi "update"; then
-        action_text="Theme Updated"
-      else
-        action_text="Theme Deployed"
-      fi
-      ;;
-    "warning")
-      emoji="⚠️"
-      color="warning"
-      action_text="Theme Created with Warnings"
-      status_field_title="Notes"
-      ;;
-    "error")
-      emoji="❌"
-      color="danger"
-      action_text="Theme Deployment Failed"
-      status_field_title="Error"
-      ;;
-    *)
-      emoji="ℹ️"
-      color="#808080"
-      action_text="Theme Status"
-      ;;
-  esac
-
-  # Clean up message for Slack (remove box drawing chars, etc)
-  local cleaned_message
-  cleaned_message=$(clean_for_slack "$message")
-  
-  local truncated_message
-  truncated_message=$(truncate_for_slack "$cleaned_message" 700)
-
-  local pr_value="<${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}|#${PR_NUMBER}: ${PR_TITLE}>"
-  local timestamp=$(date +%s)
-
-  # Escape variables for safe JavaScript string usage
-  local escaped_emoji=$(printf '%s' "$emoji" | sed "s/'/\\\\'/g")
-  local escaped_action_text=$(printf '%s' "$action_text" | sed "s/'/\\\\'/g")
-  local escaped_repo=$(printf '%s' "$GITHUB_REPOSITORY" | sed "s/'/\\\\'/g")
-  local escaped_pr_value=$(printf '%s' "$pr_value" | sed "s/'/\\\\'/g")
-  local escaped_status_title=$(printf '%s' "$status_field_title" | sed "s/'/\\\\'/g")
-  local escaped_theme_id=$(printf '%s' "$theme_id" | sed "s/'/\\\\'/g")
-  local escaped_preview=$(printf '%s' "$preview_url" | sed "s/'/\\\\'/g")
-  
-  local payload
-  payload=$(node -e "
-    const text = '${escaped_emoji} Shopify ${escaped_action_text}';
-    const color = '$color';
-    const repo = '${escaped_repo}';
-    const pr = '${escaped_pr_value}';
-    const statusTitle = '${escaped_status_title}';
-    const statusValue = \`$truncated_message\`;
-    const themeId = '${escaped_theme_id}';
-    const preview = '${escaped_preview}';
-    const footer = 'Shopify Theme Preview';
-    const ts = $timestamp;
-    
-    const payload = {
-       text: text,
-       attachments: [
-         {
-           color: color,
-           fields: [
-             {title: 'Repository', value: repo, short: true},
-             {title: 'PR', value: pr, short: true}
-           ],
-           footer: footer,
-           ts: ts
-         }
-       ]
-     };
-     
-     if (themeId) {
-       payload.attachments[0].fields.push({title: 'Theme ID', value: themeId, short: true});
-     }
-     if (preview) {
-       payload.attachments[0].fields.push({title: 'Preview URL', value: '<' + preview + '|View Preview>', short: true});
-     }
-     if (statusValue) {
-       payload.attachments[0].fields.push({title: statusTitle, value: statusValue, short: false});
-     }
-     
-     console.log(JSON.stringify(payload));
-  ")
-
-  # Send with timeout to prevent hanging
-  curl -s -X POST -H 'Content-type: application/json' \
-    --connect-timeout 5 --max-time 10 \
-    --data "$payload" \
-    "$SLACK_WEBHOOK_URL" >/dev/null 2>&1 || echo "⚠️ Failed to send Slack notification" >&2
-}
-
-# Function to post error comment on PR
-post_error_comment() {
-  local error_message=$1
-  local theme_id=$2
-  
-  echo "💬 Posting error comment to PR..."
-  
-  # Clean error message for better readability  
-  local cleaned_error
-  cleaned_error=$(clean_for_slack "$error_message")
-  
-  local comment_body=""
-  
-  if [ -n "$theme_id" ]; then
-    # Theme was created but with errors
-    STORE_URL="${SHOPIFY_FLAG_STORE}"
-    STORE_URL="${STORE_URL#https://}"
-    STORE_URL="${STORE_URL#http://}"
-    STORE_URL="${STORE_URL%/}"
-    PREVIEW_URL="https://${STORE_URL}?preview_theme_id=${theme_id}"
-    
-    comment_body=$(cat <<EOF
-## ⚠️ Shopify Theme Preview Created with Errors
-
-The theme was created but encountered some issues:
-
-\`\`\`
-${cleaned_error}
-\`\`\`
-
-**Preview URL (may have issues):** ${PREVIEW_URL}  
-**Theme ID:** \`${theme_id}\`
-
-Please fix the errors and push a new commit to update the theme.
-
-<!-- THEME_NAME:${THEME_NAME}:ID:${theme_id}:END -->
-EOF
-)
-  else
-    # Theme creation failed completely
-    comment_body=$(cat <<EOF
-## ❌ Shopify Theme Preview Failed
-
-Failed to create the preview theme due to the following error:
-
-\`\`\`
-${cleaned_error}
-\`\`\`
-
-Please fix the errors and push a new commit to retry.
-EOF
-)
-  fi
-  
-  # Escape the comment body for JSON
-  local escaped_body=$(echo "$comment_body" | node -e "const fs=require('fs'); const input=fs.readFileSync(0,'utf8'); console.log(JSON.stringify(input));")
-  
-  # Post comment
-  local response=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" "POST" "{\"body\":${escaped_body}}")
-  
-  if echo "$response" | grep -q '"id"'; then
-    echo "✅ Error comment posted successfully"
-  else
-    echo "⚠️ Warning: Could not post error comment"
-  fi
-}
-
-# Function to find and delete the oldest theme from open PRs
-handle_theme_limit() {
-  echo "⚠️ Theme limit reached, searching for oldest theme to remove..."
-
-  local open_prs
-  open_prs=$(github_api "/repos/${GITHUB_REPOSITORY}/pulls?state=open&sort=updated&direction=asc&per_page=100")
-
-  local theme_list
-  local theme_count="unknown"
-
-  if theme_list=$(shopify theme list --json 2>/dev/null); then
-    theme_count=$(printf '%s' "$theme_list" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(Array.isArray(o)?o.length:(o.themes?o.themes.length:0));}catch(e){console.log('unknown');}" || echo "unknown")
-    echo "  Store currently reports ${theme_count} theme(s)"
-  else
-    echo "  ⚠️ Unable to retrieve theme list"
-  fi
-
-  local found_candidate=false
-
-  while IFS= read -r pr_json; do
-    [ -z "$pr_json" ] && continue
-
-    local pr_number pr_updated
-    pr_number=$(printf '%s' "$pr_json" | parse_json "number" "")
-    pr_updated=$(printf '%s' "$pr_json" | parse_json "updated_at" "")
-
-    if [ -z "$pr_number" ]; then
-      continue
-    fi
-
-    if [ "$pr_number" = "$PR_NUMBER" ]; then
-      continue
-    fi
-
-    if printf '%s' "$pr_json" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));const has=(o.labels||[]).some(l=>l.name==='preserve-theme');console.log(has?'true':'');}catch(e){console.log('');}" | grep -q 'true'; then
-      echo "  Skipping PR #${pr_number} (has preserve-theme label)"
-      continue
-    fi
-
-    local pr_comments
-    pr_comments=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments")
-
-    local marker theme_id theme_name
-    marker=$(printf '%s' "$pr_comments" | extract_latest_theme_marker)
-    if [ -n "$marker" ]; then
-      theme_name=${marker%|*}
-      theme_id=${marker##*|}
-    else
-      echo "  No theme marker found for PR #${pr_number}"
-      continue
-    fi
-
-    found_candidate=true
-    echo "  Evaluating theme ${theme_id} from PR #${pr_number} (updated: ${pr_updated})"
-
-    if delete_theme_by_id "$theme_id"; then
-      echo "🗑️ Deleted theme ${theme_id} from PR #${pr_number}"
-
-      local comment_body
-      comment_body=$(cat <<EOF
-## ⚠️ Theme Auto-Removed Due to Store Limit
-
-Your preview theme was automatically deleted to make room for newer PRs (Shopify limit: 20 themes).
-
-**To recreate your preview theme:**
-- Add the label \`rebuild-theme\` to this PR
-- Or push a new commit
-
-The theme will be automatically recreated.
-EOF
-)
-
-      local escaped_body
-      escaped_body=$(echo "$comment_body" | node -e "const fs=require('fs'); const input=fs.readFileSync(0,'utf8'); console.log(JSON.stringify(input));")
-      github_api "/repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments" "POST" "{\"body\":${escaped_body}}" >/dev/null
-
-      echo "✅ Oldest theme deleted from PR #${pr_number}"
-      return 0
-    else
-      local delete_status=$?
-      if [ $delete_status -eq 2 ]; then
-        echo "  Theme ${theme_id} referenced by PR #${pr_number} no longer exists on the store"
-      else
-        echo "  Failed to delete theme ${theme_id} from PR #${pr_number}"
-        echo "$LAST_DELETE_OUTPUT"
-      fi
-      # Try next candidate
-    fi
-  done < <(printf '%s' "$open_prs" | node -e "const fs=require('fs'); const data=fs.readFileSync(0,'utf8'); try{const arr=JSON.parse(data); arr.forEach(item=>console.log(JSON.stringify(item)));}catch(e){}")
-
-  if [ "$found_candidate" = false ]; then
-    echo "⚠️ No deletable themes found (all may have preserve-theme label or no markers)"
-  else
-    echo "⚠️ No deletable themes could be removed successfully"
-  fi
-
-  return 1
-}
-
-# Function to retry theme upload to existing theme
-retry_theme_upload() {
-  local theme_id="$1"
-  local max_retries=3
-  local retry_count=0
-  
-  echo "🔄 Retrying upload to theme ID: ${theme_id}"
-  THEME_ERRORS=""
-  
-  while [ $retry_count -lt $max_retries ]; do
-    echo "📤 Upload attempt $((retry_count + 1)) of ${max_retries}..."
-    
-    local status=0
-    set +e
-    OUTPUT=$(shopify theme push \
-      --theme "${theme_id}" \
-      --nodelete \
-      --no-color \
-      --json 2>&1)
-    status=$?
-    set -e
-
-    LAST_UPLOAD_OUTPUT="$OUTPUT"
-
-    local parsed_json
-    # Extract JSON directly from the output
-    parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}$' | tail -1 || echo "")
-    if [ -z "$parsed_json" ]; then
-      parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}' | tail -1 || echo "")
-    fi
-
-    if [ $status -eq 0 ]; then
-      if [ -n "$parsed_json" ]; then
-        local error_count
-        error_count=$(echo "$parsed_json" | extract_json_value "" "error_count")
-        local warning_message
-        warning_message=$(echo "$parsed_json" | extract_json_value "" "warning")
-
-        if [ "$error_count" -eq 0 ]; then
-          if [ -n "$warning_message" ] && [ "$warning_message" != "null" ]; then
-            THEME_ERRORS="$warning_message"
-            export THEME_ERRORS
-          fi
-          echo "✅ Theme updated successfully"
-          return 0
-        fi
-
-        THEME_ERRORS=$(echo "$parsed_json" | extract_json_value "" "format_errors")
-        [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$OUTPUT"
-        retry_count=$max_retries
-        break
-      else
-        echo "✅ Theme updated successfully"
-        return 0
-      fi
-    else
-      THEME_ERRORS="$OUTPUT"
-    fi
-
-    retry_count=$((retry_count + 1))
-    if [ $retry_count -lt $max_retries ]; then
-      echo "⚠️ Upload failed, retrying in 3 seconds..."
-      sleep 3
-    fi
-  done
-  
-  echo "❌ Failed to upload to theme after ${max_retries} attempts"
-  echo "Last output: $LAST_UPLOAD_OUTPUT"
-  return 1
-}
-
-# Function to create theme (NO RETRY for validation errors)
-create_theme_with_retry() {
-  local theme_name="$1"
-  local max_retries=1  # NO RETRIES except for rate limits
-  local attempt=0
-  local limit_cleanup_attempted=false
-
-  CREATED_THEME_ID=""
-  THEME_ERRORS=""
-  LAST_UPLOAD_OUTPUT=""
-
-  while [ $attempt -lt $max_retries ]; do
-    if [ -z "$CREATED_THEME_ID" ]; then
-      echo "🎨 Creating new theme: ${theme_name} (attempt $((attempt + 1)))"
-
-      local status=0
-      set +e
-      OUTPUT=$(shopify theme push \
-        --unpublished \
-        --theme "${theme_name}" \
-        --nodelete \
-        --no-color \
-        --json 2>&1)
-      status=$?
-      set -e
-
-      LAST_UPLOAD_OUTPUT="$OUTPUT"
-      
-      echo "🔍 Checking theme creation output..."
-      
-      # First check if this is a rate limit error
-      if echo "$OUTPUT" | grep -qi "limit\|maximum\|exceeded\|too many"; then
-        echo "⚠️ Theme limit error detected"
-        if [ "$limit_cleanup_attempted" = false ] && handle_theme_limit; then
-          limit_cleanup_attempted=true
-          echo "🔄 Retrying theme creation after cleanup..."
-          attempt=$((attempt + 1))
-          sleep 2
-          continue
-        fi
-
-        THEME_ERRORS="Theme limit reached and older previews could not be removed automatically."
-        post_error_comment "$THEME_ERRORS" ""
-        send_slack_notification "error" "$THEME_ERRORS" "" ""
-        return 1
-      fi
-
-      # Extract JSON from the output - Shopify CLI with --json always outputs JSON
-      # even when there are errors, it just mixes it with box-drawing output
-      local parsed_json
-      
-      # Extract JSON directly - the JSON is always at the end, after any error boxes
-      # Look for the complete JSON object that starts with {"theme":
-      parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}$' | tail -1 || echo "")
-      
-      # If not found with $ anchor (sometimes there's trailing whitespace), try without it
-      if [ -z "$parsed_json" ]; then
-        parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}' | tail -1 || echo "")
-      fi
-      
-      if [ -n "$parsed_json" ]; then
-        echo "✅ Found JSON response from Shopify CLI"
-      else
-        echo "❌ ERROR: No JSON found in output despite using --json flag"
-        echo "📝 Full output was:"
-        echo "$OUTPUT"
-      fi
-
-      if [ -n "$parsed_json" ]; then
-        echo "📋 Parsing theme creation response..."
-        local parsed_theme_id
-        parsed_theme_id=$(echo "$parsed_json" | extract_json_value "" "theme_id")
-        [ "$parsed_theme_id" = "null" ] && parsed_theme_id=""
-        if [ -n "$parsed_theme_id" ]; then
-          CREATED_THEME_ID="$parsed_theme_id"
-          THEME_ID="$CREATED_THEME_ID"
-          export THEME_ID
-          echo "✅ Theme created with ID: ${CREATED_THEME_ID}"
-        fi
-
-        # Check for errors in the JSON response
-        local error_count
-        error_count=$(echo "$parsed_json" | extract_json_value "" "error_count")
-        local warning_message
-        warning_message=$(echo "$parsed_json" | extract_json_value "" "warning")
-        
-        echo "📊 Theme creation result: error_count=${error_count}, has_warnings=$([ -n "$warning_message" ] && [ "$warning_message" != "null" ] && echo "yes" || echo "no")"
-
-        if [ "$error_count" -gt 0 ]; then
-          echo "❌ Theme was created with ${error_count} error(s)"
-          THEME_ERRORS=$(echo "$parsed_json" | extract_json_value "" "format_errors")
-          [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$OUTPUT"
-          
-          echo "📝 Errors found:"
-          echo "$THEME_ERRORS"
-
-          # ALL errors from Shopify theme push are validation errors - don't retry
-          echo "❌ Shopify theme validation errors detected"
-          
-          # ALWAYS cleanup the failed theme immediately
-          if [ -n "$CREATED_THEME_ID" ]; then
-            echo "🧹 Cleaning up theme ${CREATED_THEME_ID} that was created with errors..."
-            if cleanup_failed_theme "$CREATED_THEME_ID"; then
-              echo "✅ Failed theme ${CREATED_THEME_ID} has been removed"
-              CREATED_THEME_ID=""  # Clear since we cleaned it up
-            else
-              echo "⚠️ WARNING: Could not cleanup failed theme ${CREATED_THEME_ID}"
-            fi
-          fi
-          
-          # Exit immediately - NO RETRIES for validation errors
-          post_error_comment "$THEME_ERRORS" ""
-          local cleaned_errors
-          cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
-          send_slack_notification "error" "Theme creation failed with validation errors:\n${cleaned_errors}" "" ""
-          
-          echo "🛑 Stopping - validation errors cannot be fixed by retrying"
-          return 1
-            else
-              echo "⚠️ WARNING: Could not cleanup failed theme ${CREATED_THEME_ID}"
-              # Include theme ID since it still exists
-              post_error_comment "$THEME_ERRORS" "$CREATED_THEME_ID"
-              
-              local preview_url=""
-              if [ -n "$CREATED_THEME_ID" ]; then
-                local store_url="${SHOPIFY_FLAG_STORE}"
-                store_url="${store_url#https://}"
-                store_url="${store_url#http://}"
-                store_url="${store_url%/}"
-                preview_url="https://${store_url}?preview_theme_id=${CREATED_THEME_ID}"
-              fi
-              
-              local cleaned_errors
-              cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
-              send_slack_notification "error" "Theme creation failed with validation errors:\n${cleaned_errors}\n\n⚠️ Failed theme ${CREATED_THEME_ID} could not be cleaned up - manual cleanup required!" "$preview_url" "$CREATED_THEME_ID"
-              
-              echo "🛑 Stopping - validation errors cannot be fixed by retrying"
-              return 1
-            fi
-          else
-            # No theme was created, just post error
-            echo "❌ Theme creation failed completely (no theme ID found)"
-            post_error_comment "$THEME_ERRORS" ""
-            local cleaned_errors
-            cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
-            send_slack_notification "error" "Theme creation failed:\n${cleaned_errors}" "" ""
-            return 1
-          fi
-        fi
-
-        if [ -n "$warning_message" ] && [ "$warning_message" != "null" ]; then
-          echo "⚠️ Theme created with warnings: $warning_message"
-          THEME_ERRORS="$warning_message"
-          export THEME_ERRORS
-          return 0
-        fi
-
-        if [ -n "$CREATED_THEME_ID" ]; then
-          echo "✅ Theme created successfully without errors!"
-          return 0
-        fi
-        
-        # If we get here, no theme ID was found in the JSON
-        echo "❌ ERROR: JSON response didn't contain a theme ID"
-        echo "📝 Full JSON was: $parsed_json"
-        # This is a critical error - the theme was likely created but we can't get its ID
-        # Try to extract it manually
-        local manual_theme_id
-        manual_theme_id=$(echo "$parsed_json" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
-        if [ -n "$manual_theme_id" ]; then
-          echo "🔍 Manually extracted theme ID: $manual_theme_id"
-          CREATED_THEME_ID="$manual_theme_id"
-          THEME_ID="$CREATED_THEME_ID"
-          export THEME_ID
-          return 0
-        fi
-        # If we still can't get the ID, fail immediately
-        THEME_ERRORS="Failed to extract theme ID from Shopify response"
-        return 1
-      else
-        # No JSON found - this should not happen with --json flag!
-        echo "❌ CRITICAL ERROR: No JSON response despite using --json flag"
-        echo "📝 Checking raw output for any errors or theme ID..."
-        
-        # Try to find a theme ID in the raw output
-        local potential_theme_id
-        potential_theme_id=$(echo "$OUTPUT" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
-        
-        if [ -n "$potential_theme_id" ]; then
-          echo "🔍 Found theme ID in output: ${potential_theme_id}"
-          echo "🧹 Cleaning up theme ${potential_theme_id} since we can't determine its status..."
-          if cleanup_failed_theme "$potential_theme_id"; then
-            echo "✅ Cleaned up theme ${potential_theme_id}"
-          else
-            echo "⚠️ Could not cleanup theme ${potential_theme_id} - manual cleanup may be required"
-          fi
-        fi
-        
-        # Extract any visible errors from the output
-        THEME_ERRORS=$(echo "$OUTPUT" | grep -E "error|Error|failed|Failed|can't|cannot|invalid" | head -20)
-        [ -z "$THEME_ERRORS" ] && THEME_ERRORS="Theme creation failed - no JSON response received"
-        
-        # Post error and exit - DO NOT RETRY
-        post_error_comment "$THEME_ERRORS" ""
-        local cleaned_errors
-        cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
-        send_slack_notification "error" "Theme creation failed - no proper response from Shopify CLI:\n${cleaned_errors}" "" ""
-        
-        echo "🛑 Stopping - cannot proceed without proper response from Shopify CLI"
-        return 1
-      fi
-      
-      # This point should NEVER be reached anymore
-      echo "❌ UNEXPECTED: Reached retry logic - this should not happen!"
-      # Only retry for rate limit errors
-      if echo "$OUTPUT" | grep -qi "limit\|maximum\|exceeded\|too many"; then
-        echo "⚠️ Rate limit detected"
-        attempt=$((attempt + 1))
-        if [ $attempt -lt $max_retries ]; then
-          echo "⏳ Waiting 30 seconds before retry..."
-          sleep 30
-          continue
-        fi
-      fi
-      
-      # For any other error, fail immediately - NO RETRIES
-      echo "❌ Theme creation failed - not retrying"
-      return 1
-    else
-      if retry_theme_upload "$CREATED_THEME_ID"; then
-        THEME_ID="$CREATED_THEME_ID"
-        export THEME_ID
-        return 0
-      fi
-
-      attempt=$((attempt + 1))
-      if [ $attempt -lt $max_retries ]; then
-        echo "⚠️ Upload to theme ${CREATED_THEME_ID} failed, retrying in 3 seconds..."
-        sleep 3
-      fi
-    fi
-  done
-
-  echo "❌ Failed to create theme"
-  [ -n "$LAST_UPLOAD_OUTPUT" ] && echo "Last output: $LAST_UPLOAD_OUTPUT"
-
-  # Always try to cleanup any partially created theme
-  if [ -n "$CREATED_THEME_ID" ]; then
-    echo "🧹 Attempting to cleanup failed theme ${CREATED_THEME_ID}..."
-    if cleanup_failed_theme "$CREATED_THEME_ID"; then
-      echo "✅ Cleanup successful"
-      # Don't include theme ID in error message since it's been deleted
-      local final_message="$THEME_ERRORS"
-      [ -z "$final_message" ] && final_message="$LAST_UPLOAD_OUTPUT"
-      post_error_comment "$final_message" ""
-      send_slack_notification "error" "Theme creation failed after retries. Failed theme has been cleaned up." "" ""
-    else
-      echo "⚠️ Could not cleanup failed theme ${CREATED_THEME_ID}"
-      # Include theme ID in error since it still exists
-      local final_message="$THEME_ERRORS"
-      [ -z "$final_message" ] && final_message="$LAST_UPLOAD_OUTPUT"
-      post_error_comment "$final_message" "$CREATED_THEME_ID"
-
-      local store_url="${SHOPIFY_FLAG_STORE}"
-      store_url="${store_url#https://}"
-      store_url="${store_url#http://}"
-      store_url="${store_url%/}"
-      local preview_url="https://${store_url}?preview_theme_id=${CREATED_THEME_ID}"
-
-      send_slack_notification "error" "Theme upload failed after retries. Failed theme ${CREATED_THEME_ID} could not be cleaned up." "$preview_url" "$CREATED_THEME_ID"
-    fi
-  else
-    local fallback_message="$THEME_ERRORS"
-    [ -z "$fallback_message" ] && fallback_message="$LAST_UPLOAD_OUTPUT"
-    post_error_comment "$fallback_message" ""
-    send_slack_notification "error" "$fallback_message" "" ""
-  fi
-
-  return 1
-}
-
-# Check if PR has no-sync label
-HAS_NO_SYNC_LABEL="false"
-if [ -n "$PR_LABELS" ]; then
-  # Parse the JSON array of labels
-  if echo "$PR_LABELS" | grep -q '"no-sync"'; then
-    HAS_NO_SYNC_LABEL="true"
-    echo "🔒 Found 'no-sync' label - will skip pulling theme settings"
-  fi
-fi
-
-# Check if PR has rebuild-theme label
+# Check for rebuild-theme label
 HAS_REBUILD_LABEL="false"
 if [ -n "$PR_LABELS" ]; then
-  # Parse the JSON array of labels
-  if echo "$PR_LABELS" | grep -q '"rebuild-theme"'; then
+  if echo "$PR_LABELS" | grep -q "rebuild-theme"; then
     HAS_REBUILD_LABEL="true"
     echo "🔄 Found 'rebuild-theme' label - will pull fresh settings from source theme"
   fi
@@ -977,90 +83,46 @@ THEME_NAME=$(echo "$THEME_NAME" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
 echo "📝 Theme name: ${THEME_NAME}"
 
-# Helper function: check if theme exists by name in Shopify store
-check_theme_exists_by_name() {
-  local theme_name="$1"
-  local theme_list
-  
-  echo "🔍 Checking if theme with name '${theme_name}' exists in Shopify store..."
-  
-  if ! theme_list=$(shopify theme list --json 2>/dev/null); then
-    echo "⚠️ Could not retrieve theme list from Shopify"
-    return 1
-  fi
-  
-  # Look for exact theme name match
-  local found_theme_id
-  found_theme_id=$(echo "$theme_list" | node -e "
-    const fs = require('fs');
-    const data = fs.readFileSync(0, 'utf8');
-    const name = process.argv[1];
-    try {
-      const obj = JSON.parse(data);
-      const themes = obj.themes || obj || [];
-      const found = Array.isArray(themes) ? themes.find(t => t.name === name) : null;
-      console.log(found?.id || '');
-    } catch(e) {
-      console.error('Error parsing theme list:', e.message);
-      console.log('');
-    }
-  " -- "$theme_name" 2>/dev/null | head -1)
-  
-  if [ -n "$found_theme_id" ] && [ "$found_theme_id" != "null" ]; then
-    echo "✅ Found existing theme with name '${theme_name}' (ID: ${found_theme_id})"
-    echo "$found_theme_id"
-    return 0
-  fi
-  
-  return 1
-}
-
 # Find existing theme information from PR comments
 echo "🔍 Checking for existing theme..."
 
 # Fetch comments and theme list in parallel for better performance
 {
-  COMMENTS=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments") &
+  COMMENTS=$(fetch_pr_comments "$PR_NUMBER") &
   COMMENTS_PID=$!
   
-  # Also start fetching theme list early if we might need it
-  THEME_LIST_CACHE=$(shopify theme list --json 2>&1) &
+  THEME_LIST_JSON=$(shopify theme list --json 2>/dev/null) &
   THEME_LIST_PID=$!
 } 2>/dev/null
 
-# Wait for comments to finish
-wait $COMMENTS_PID 2>/dev/null || COMMENTS=""
+# Wait for both operations to complete
+wait $COMMENTS_PID $THEME_LIST_PID 2>/dev/null || true
 
-# Count how many theme markers exist in comments for debugging
-MARKER_COUNT=$(printf '%s' "$COMMENTS" | grep -o '<!-- THEME_NAME:.*:ID:[0-9]*:END -->' | wc -l | tr -d ' ')
-if [ "$MARKER_COUNT" -gt 0 ]; then
-  echo "📊 Found ${MARKER_COUNT} theme marker(s) in PR comments"
+# Extract theme ID from comments if exists
+if [ -n "$COMMENTS" ]; then
+  EXISTING_THEME_ID=$(echo "$COMMENTS" | extract_latest_theme_marker)
 fi
 
-THEME_MARKER=$(printf '%s' "$COMMENTS" | extract_latest_theme_marker)
-
-if [ -n "$THEME_MARKER" ]; then
-  EXISTING_THEME_NAME=${THEME_MARKER%|*}
-  EXISTING_THEME_ID=${THEME_MARKER##*|}
-  echo "🎯 Selected most recent theme marker: ${EXISTING_THEME_NAME} (ID: ${EXISTING_THEME_ID})"
-fi
-
+# If we found a theme ID in comments, verify it still exists
 if [ -n "$EXISTING_THEME_ID" ]; then
-  echo "✅ Will attempt to use theme ID: ${EXISTING_THEME_ID}"
-  if [ -n "$EXISTING_THEME_NAME" ] && [ "$EXISTING_THEME_NAME" != "$THEME_NAME" ]; then
-    echo "ℹ️ Note: Theme name differs from PR title"
+  echo "📋 Found theme ID ${EXISTING_THEME_ID} in PR comments"
+  
+  # Check if this theme actually exists in the Shopify store
+  THEME_EXISTS=""
+  if [ -n "$THEME_LIST_JSON" ]; then
+    THEME_EXISTS=$(echo "$THEME_LIST_JSON" | node -e "
+      const data = require('fs').readFileSync(0, 'utf8');
+      const themeId = '$EXISTING_THEME_ID';
+      try {
+        const obj = JSON.parse(data);
+        const themes = obj.themes || obj || [];
+        const exists = Array.isArray(themes) ? themes.some(t => t.id == themeId) : false;
+        console.log(exists ? 'true' : '');
+      } catch(e) {
+        console.log('');
+      }
+    " 2>/dev/null)
   fi
-  
-  # Verify the theme actually exists on the store
-  echo "🔍 Verifying theme ${EXISTING_THEME_ID} exists on the store..."
-  
-  # Use cached theme list if available, otherwise fetch it
-  if [ -n "${THEME_LIST_PID:-}" ]; then
-    wait $THEME_LIST_PID 2>/dev/null || THEME_LIST_CACHE="{}"
-  fi
-  THEME_LIST="${THEME_LIST_CACHE:-$(shopify theme list --json 2>&1 || echo "{}")}"
-  
-  THEME_EXISTS=$(echo "$THEME_LIST" | node -e "const fs=require('fs'); const data=fs.readFileSync(0,'utf8'); const id='$EXISTING_THEME_ID'; try{const obj=JSON.parse(data); const themes=obj.themes||obj||[]; const found=Array.isArray(themes)?themes.find(t=>t.id==id):null; console.log(found?.id||'');}catch(e){}" || echo "")
   
   if [ -z "$THEME_EXISTS" ]; then
     echo "⚠️ Theme ${EXISTING_THEME_ID} from comments no longer exists on the store!"
@@ -1088,7 +150,6 @@ else
   fi
 fi
 
-
 # Run build command if provided
 if [ -n "${BUILD_COMMAND}" ]; then
   echo "🔨 Running build command: ${BUILD_COMMAND}"
@@ -1110,219 +171,191 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
       echo "📥 No source theme specified, pulling from live theme"
       THEME_SELECTOR="--live"
     fi
-    
+
     echo "⬇️ Pulling JSON configuration files..."
-    shopify theme pull \
-      ${THEME_SELECTOR} \
-      --only "templates/*.json" \
-      --only "sections/*.json" \
-      --only "config/settings_data.json" \
-      --only "locales/*.json" \
-      --only "snippets/*.json" \
-      --nodelete \
-      --no-color 2>&1 | while IFS= read -r line; do
-        # Filter out noisy output
-        if [[ ! "$line" =~ "Pulling theme files from" ]] && \
-           [[ ! "$line" =~ "Theme pulled successfully" ]]; then
-          echo "$line"
-        fi
-      done || echo "⚠️ Warning: Could not pull all settings files (this is okay if some don't exist)"
     
-    echo "📤 Pushing updated theme with fresh settings..."
-    # When rebuild-theme label is present, push ALL files including JSON
-    UPDATE_OUTPUT=$(shopify theme push \
-      --theme "${EXISTING_THEME_ID}" \
-      --nodelete \
-      --no-color \
-      --json 2>&1)
-  else
-    echo "💾 Preserving theme settings (excluding JSON files from update)"
-    # Normal update - preserve existing theme settings
-    UPDATE_OUTPUT=$(shopify theme push \
-      --theme "${EXISTING_THEME_ID}" \
-      --nodelete \
-      --no-color \
-      --ignore "templates/*.json" \
-      --ignore "sections/*.json" \
-      --ignore "config/settings_data.json" \
-      --ignore "snippets/*.json" \
-      --json 2>&1)
-  fi
-  
-  UPDATE_SUCCESS=$?
-  LAST_UPLOAD_OUTPUT="$UPDATE_OUTPUT"
-  
-  # Log the output for debugging
-  echo "📝 Update command exit code: $UPDATE_SUCCESS"
-  if [ -n "$UPDATE_OUTPUT" ]; then
-    echo "📋 Update output preview (first 500 chars):"
-    echo "${UPDATE_OUTPUT:0:500}"
-  fi
-  
-  local update_parsed_json
-  # Extract JSON directly from the output
-  update_parsed_json=$(printf '%s' "$UPDATE_OUTPUT" | grep -o '{"theme":{.*}}$' | tail -1 || echo "")
-  if [ -z "$update_parsed_json" ]; then
-    update_parsed_json=$(printf '%s' "$UPDATE_OUTPUT" | grep -o '{"theme":{.*}}' | tail -1 || echo "")
-  fi
-  local update_error_count=0
-  local update_warning_message=""
-
-  if [ -n "$update_parsed_json" ]; then
-    update_error_count=$(echo "$update_parsed_json" | extract_json_value "" "error_count")
-    update_warning_message=$(echo "$update_parsed_json" | extract_json_value "" "warning")
-  fi
-  
-  # Check if the theme doesn't exist error
-  if [[ "$UPDATE_OUTPUT" == *"Theme #${EXISTING_THEME_ID} doesn't exist"* ]] || \
-     [[ "$UPDATE_OUTPUT" == *"doesn't exist"* ]] || \
-     [[ "$UPDATE_OUTPUT" == *"not found"* ]] || \
-     [[ "$UPDATE_OUTPUT" == *"404"* ]]; then
-    echo "❌ Theme ${EXISTING_THEME_ID} not found on the store!"
-    echo "📝 Creating a new theme instead..."
-    EXISTING_THEME_ID=""
-  elif [ $UPDATE_SUCCESS -ne 0 ] || [ "$update_error_count" -gt 0 ]; then
-    echo "⚠️ Theme update encountered errors"
-    if [ -n "$update_parsed_json" ]; then
-      THEME_ERRORS=$(echo "$update_parsed_json" | node -e "const fs=require('fs'); const data=fs.readFileSync(0,'utf8'); try{const obj=JSON.parse(data); const errors=obj.theme?.errors||{}; const lines=Object.entries(errors).map(([k,v])=>'• '+k+': '+(Array.isArray(v)?v.join(', '):v)); console.log(lines.join('\\n'));}catch(e){}")
+    # Pull only JSON files to preserve settings
+    if ! shopify theme pull $THEME_SELECTOR --only="*.json" --no-color 2>&1; then
+      echo "⚠️ Warning: Could not pull settings from source theme"
+    else
+      echo "✅ Settings pulled successfully"
     fi
-    [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$UPDATE_OUTPUT"
-
-    echo "❌ Full error output:"
-    echo "$UPDATE_OUTPUT"
-
-    post_error_comment "${THEME_ERRORS}" "${EXISTING_THEME_ID}"
+  else
+    echo "💾 Preserving existing theme settings (no rebuild-theme label)"
+  fi
+  
+  # Upload to existing theme
+  THEME_ID="${EXISTING_THEME_ID}"
+  export THEME_ID
+  
+  if upload_theme "${EXISTING_THEME_ID}"; then
+    echo "✅ Theme ${EXISTING_THEME_ID} updated successfully!"
     
+    # Get preview URL for existing theme
     STORE_URL="${SHOPIFY_FLAG_STORE}"
     STORE_URL="${STORE_URL#https://}"
     STORE_URL="${STORE_URL#http://}"
     STORE_URL="${STORE_URL%/}"
     PREVIEW_URL="https://${STORE_URL}?preview_theme_id=${EXISTING_THEME_ID}"
     
-    local cleaned_errors
-    cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
-    send_slack_notification "error" "Theme update failed with validation errors:\n${cleaned_errors}" "${PREVIEW_URL}" "${EXISTING_THEME_ID}"
-    exit 1
-  else
-    # Update succeeded
-    if [ -n "$update_warning_message" ] && [ "$update_warning_message" != "null" ]; then
-      echo "⚠️ Theme updated with warnings"
-      THEME_ERRORS="$update_warning_message"
-      export THEME_ERRORS
+    # Post success comment with existing theme
+    COMMENT_BODY="## ✅ Shopify Theme Preview Updated
+
+Your theme preview has been updated successfully!
+
+### Theme Details:
+- **Theme ID**: \`${EXISTING_THEME_ID}\`
+- **Preview URL**: [View Preview](${PREVIEW_URL})
+- **Admin URL**: [Theme Editor](https://${STORE_URL}/admin/themes/${EXISTING_THEME_ID}/editor)
+
+<!-- SHOPIFY_THEME_ID: ${EXISTING_THEME_ID} -->"
+
+    if [ -n "$THEME_ERRORS" ]; then
+      # Clean error message for display
+      CLEANED_ERRORS=$(clean_for_slack "$THEME_ERRORS")
+      COMMENT_BODY="${COMMENT_BODY}
+
+### ⚠️ Warnings:
+\`\`\`
+${CLEANED_ERRORS}
+\`\`\`"
     fi
 
-    THEME_ID="${EXISTING_THEME_ID}"
-    echo "✅ Theme updated successfully"
+    # Post comment
+    if post_pr_comment "$PR_NUMBER" "$COMMENT_BODY"; then
+      echo "✅ Success comment posted"
+    else
+      echo "⚠️ Failed to post success comment"
+    fi
+    
+    # Send Slack notification
+    if [ -n "$THEME_ERRORS" ]; then
+      send_slack_notification "warning" "Theme updated with warnings:\n${CLEANED_ERRORS}" "$PREVIEW_URL" "$EXISTING_THEME_ID"
+    else
+      send_slack_notification "success" "Theme updated successfully!" "$PREVIEW_URL" "$EXISTING_THEME_ID"
+    fi
+    
+    # Set outputs for GitHub Action
+    echo "theme-id=${EXISTING_THEME_ID}" >> "$GITHUB_OUTPUT"
+    echo "preview-url=${PREVIEW_URL}" >> "$GITHUB_OUTPUT"
+    
+    exit 0
+  else
+    # Update failed - check if theme doesn't exist
+    if echo "$LAST_UPLOAD_OUTPUT" | grep -qi "doesn't exist\|not found\|Theme #${EXISTING_THEME_ID} does not exist"; then
+      echo "❌ Theme ${EXISTING_THEME_ID} no longer exists! Will create a new one..."
+      EXISTING_THEME_ID=""
+      # Fall through to create new theme
+    else
+      # Update failed for other reasons
+      echo "❌ Failed to update existing theme"
+      post_error_comment "$THEME_ERRORS" "$EXISTING_THEME_ID"
+      
+      local cleaned_errors
+      cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
+      send_slack_notification "error" "Failed to update existing theme:\n${cleaned_errors}" "" "$EXISTING_THEME_ID"
+      exit 1
+    fi
   fi
 fi
 
-# If theme doesn't exist or update failed due to non-existence, create new theme
-if [ -z "${EXISTING_THEME_ID}" ]; then
-  # Pull settings from source theme (only on initial creation and if no-sync label is not present)
-  if [ "$HAS_NO_SYNC_LABEL" = "true" ]; then
-    echo "⏭️ Skipping theme settings pull due to 'no-sync' label"
-    echo "📄 Using JSON files from repository as-is"
+# Create new theme (only if no existing theme or update failed due to non-existence)
+if create_theme_with_retry "${THEME_NAME}"; then
+  echo "🎉 Theme created and deployed successfully!"
+  
+  # Get preview URL
+  STORE_URL="${SHOPIFY_FLAG_STORE}"
+  STORE_URL="${STORE_URL#https://}"
+  STORE_URL="${STORE_URL#http://}"
+  STORE_URL="${STORE_URL%/}"
+  PREVIEW_URL="https://${STORE_URL}?preview_theme_id=${CREATED_THEME_ID}"
+  
+  # Post success comment
+  COMMENT_BODY="## ✅ Shopify Theme Preview Created
+
+Your theme preview has been created successfully!
+
+### Theme Details:
+- **Theme ID**: \`${CREATED_THEME_ID}\`
+- **Preview URL**: [View Preview](${PREVIEW_URL})
+- **Admin URL**: [Theme Editor](https://${STORE_URL}/admin/themes/${CREATED_THEME_ID}/editor)
+
+<!-- SHOPIFY_THEME_ID: ${CREATED_THEME_ID} -->"
+
+  if [ -n "$THEME_ERRORS" ]; then
+    # Clean error message for display
+    CLEANED_ERRORS=$(clean_for_slack "$THEME_ERRORS")
+    COMMENT_BODY="${COMMENT_BODY}
+
+### ⚠️ Warnings:
+\`\`\`
+${CLEANED_ERRORS}
+\`\`\`"
+  fi
+
+  # Post comment
+  if post_pr_comment "$PR_NUMBER" "$COMMENT_BODY"; then
+    echo "✅ Success comment posted"
   else
-    if [ -n "${SOURCE_THEME_ID}" ]; then
-      echo "📥 Pulling settings from theme ID: ${SOURCE_THEME_ID}"
-      THEME_SELECTOR="--theme ${SOURCE_THEME_ID}"
-    else
-      echo "📥 No source theme specified, pulling from live theme"
-      THEME_SELECTOR="--live"
-    fi
-    
-    echo "⬇️ Pulling JSON configuration files..."
-    shopify theme pull \
-      ${THEME_SELECTOR} \
-      --only "templates/*.json" \
-      --only "sections/*.json" \
-      --only "config/settings_data.json" \
-      --only "locales/*.json" \
-      --only "snippets/*.json" \
-      --nodelete \
-      --no-color 2>&1 | while IFS= read -r line; do
-        # Filter out noisy output
-        if [[ ! "$line" =~ "Pulling theme files from" ]] && \
-           [[ ! "$line" =~ "Theme pulled successfully" ]]; then
-          echo "$line"
-        fi
-      done || echo "⚠️ Warning: Could not pull all settings files (this is okay if some don't exist)"
+    echo "⚠️ Failed to post success comment"
   fi
   
-  # Use the retry function to create theme
-  if create_theme_with_retry "${THEME_NAME}"; then
-    # THEME_ID is set by the function
-    echo "🎆 Theme creation successful!"
-    
-    # Generate preview URL
-    STORE_URL="${SHOPIFY_FLAG_STORE}"
-    STORE_URL="${STORE_URL#https://}"
-    STORE_URL="${STORE_URL#http://}"
-    STORE_URL="${STORE_URL%/}"
-    PREVIEW_URL="https://${STORE_URL}?preview_theme_id=${THEME_ID}"
-    
-    echo "🔗 Preview URL: ${PREVIEW_URL}"
-    
-    # Create the comment body
-    if [ -n "$THEME_ERRORS" ]; then
-      # Theme created with warnings/errors
-      COMMENT_BODY=$(cat <<EOF
-## ⚠️ Shopify Theme Preview Created with Warnings
-
-**Preview your changes:** ${PREVIEW_URL}
-
-**Theme:** ${THEME_NAME}  
-**Theme ID:** \`${THEME_ID}\`
-
-The theme was created but encountered some issues:
-\`\`\`
-${THEME_ERRORS}
-\`\`\`
-
-This preview theme will be automatically deleted when the PR is closed or merged.
-
-<!-- THEME_NAME:${THEME_NAME}:ID:${THEME_ID}:END -->
-EOF
-)
-      send_slack_notification "warning" "Theme created with warnings" "${PREVIEW_URL}" "${THEME_ID}"
+  # Send Slack notification
+  if [ -n "$THEME_ERRORS" ]; then
+    send_slack_notification "warning" "Theme created with warnings:\n${CLEANED_ERRORS}" "$PREVIEW_URL" "$CREATED_THEME_ID"
+  else
+    send_slack_notification "success" "Theme created successfully!" "$PREVIEW_URL" "$CREATED_THEME_ID"
+  fi
+  
+  # Set outputs for GitHub Action
+  echo "theme-id=${CREATED_THEME_ID}" >> "$GITHUB_OUTPUT"
+  echo "preview-url=${PREVIEW_URL}" >> "$GITHUB_OUTPUT"
+  
+  exit 0
+else
+  echo "❌ Failed to create theme"
+  
+  # Always try to cleanup any partially created theme
+  if [ -n "$CREATED_THEME_ID" ]; then
+    echo "🧹 Attempting to cleanup failed theme ${CREATED_THEME_ID}..."
+    if cleanup_failed_theme "$CREATED_THEME_ID"; then
+      echo "✅ Failed theme ${CREATED_THEME_ID} cleaned up"
+      
+      # Post error without theme ID since we cleaned it up
+      post_error_comment "$THEME_ERRORS" ""
+      
+      # Adjust error message to indicate cleanup was successful
+      local cleaned_errors
+      cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
+      send_slack_notification "error" "Theme creation failed:\n${cleaned_errors}\n\nThe failed theme has been cleaned up." "" ""
     else
-      # Theme created successfully
-      COMMENT_BODY=$(cat <<EOF
-## 🚀 Shopify Theme Preview
-
-**Preview your changes:** ${PREVIEW_URL}
-
-**Theme:** ${THEME_NAME}  
-**Theme ID:** \`${THEME_ID}\`
-
-This preview theme will be automatically deleted when the PR is closed or merged.
-
-<!-- THEME_NAME:${THEME_NAME}:ID:${THEME_ID}:END -->
-EOF
-)
-      send_slack_notification "success" "Theme deployed successfully" "${PREVIEW_URL}" "${THEME_ID}"
-    fi
-    
-    # Escape the comment body for JSON
-    ESCAPED_BODY=$(echo "$COMMENT_BODY" | node -e "const fs=require('fs'); const input=fs.readFileSync(0,'utf8'); console.log(JSON.stringify(input));")
-    
-    # Post comment with preview URL
-    echo "💬 Posting preview comment..."
-    RESPONSE=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" "POST" "{\"body\":${ESCAPED_BODY}}")
-    
-    if echo "$RESPONSE" | grep -q '"id"'; then
-      echo "✅ Preview comment posted successfully"
-    else
-      echo "⚠️ Warning: Could not post comment, but theme was created successfully"
-      echo "Response: $RESPONSE"
+      echo "⚠️ WARNING: Could not cleanup failed theme ${CREATED_THEME_ID}"
+      
+      # Post error with theme ID since it still exists
+      post_error_comment "$THEME_ERRORS" "$CREATED_THEME_ID"
+      
+      # Include preview URL in Slack notification since theme exists
+      local preview_url=""
+      if [ -n "$CREATED_THEME_ID" ]; then
+        local store_url="${SHOPIFY_FLAG_STORE}"
+        store_url="${store_url#https://}"
+        store_url="${store_url#http://}"
+        store_url="${store_url%/}"
+        preview_url="https://${store_url}?preview_theme_id=${CREATED_THEME_ID}"
+      fi
+      
+      local cleaned_errors
+      cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
+      send_slack_notification "error" "Theme creation failed:\n${cleaned_errors}\n\n⚠️ Failed theme ${CREATED_THEME_ID} could not be cleaned up - manual cleanup required!" "$preview_url" "$CREATED_THEME_ID"
     fi
   else
-    echo "❌ Failed to create theme"
-    exit 1
+    # No theme was created at all
+    post_error_comment "$THEME_ERRORS" ""
+    
+    local cleaned_errors
+    cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
+    send_slack_notification "error" "Theme creation failed:\n${cleaned_errors}" "" ""
   fi
+  
+  exit 1
 fi
-
-# Output theme ID for other steps
-echo "theme-id=${THEME_ID}" >> $GITHUB_OUTPUT
-
-echo "🎉 Deployment complete!"
