@@ -28,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Protected against malicious inputs
 - Support for fork protection in workflows
 
+## [1.1.2] - 2025-09-22
+
+### Fixed
+- Removed JavaScript/Node.js from Slack notification payload generation
+- Replaced complex Node.js eval with simple bash JSON string concatenation
+- Fixed theme detection function output (debug to stderr, result to stdout)
+- Added theme name listing in debug output for better troubleshooting
+- Fixed "status is not defined" JavaScript error in Slack notifications
+
 ## [1.1.0] - 2025-09-22
 
 ### Changed

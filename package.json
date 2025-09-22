@@ -1,6 +1,6 @@
 {
   "name": "shoplab-pr-shopify-theme-preview",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "description": "GitHub Action to automatically deploy and manage Shopify preview themes for pull requests",
   "main": "action.yml",
   "scripts": {
