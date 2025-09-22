@@ -28,6 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Protected against malicious inputs
 - Support for fork protection in workflows
 
+## [1.0.6] - 2025-09-22
+
+### Fixed
+- **CRITICAL**: Removed all `jq` dependencies - now uses native Node.js for JSON parsing
+- **Fixed**: Handles both array and object JSON responses from Shopify CLI
+- **Fixed**: No longer fails when `jq` is not installed on the server
+
+### Changed
+- All JSON parsing now uses Node.js which is guaranteed to be available
+- More robust JSON handling for different Shopify API response formats
+- Removed external dependency on `jq` command-line tool
+
 ## [1.0.5] - 2025-09-22
 
 ### Fixed

@@ -71,6 +71,26 @@ clean_for_slack() {
   printf '%s' "$cleaned"
 }
 
+# Helper function: Parse JSON using Node.js instead of jq
+parse_json() {
+  local json_input="$1"
+  local query="$2"
+  
+  echo "$json_input" | node -e "
+    const data = require('fs').readFileSync(0, 'utf8');
+    if (!data.trim()) {
+      console.log('');
+      process.exit(0);
+    }
+    try {
+      const obj = JSON.parse(data);
+      $query
+    } catch (error) {
+      console.log('');
+    }
+  " 2>/dev/null || echo ""
+}
+
 # Helper function: extract the most recent theme marker from PR comments
 extract_latest_theme_marker() {
   local input_json
@@ -254,35 +274,45 @@ send_slack_notification() {
   local timestamp=$(date +%s)
 
   local payload
-  payload=$(jq -n \
-    --arg text "${emoji} Shopify ${action_text}" \
-    --arg color "$color" \
-    --arg repo "$GITHUB_REPOSITORY" \
-    --arg pr "$pr_value" \
-    --arg statusTitle "$status_field_title" \
-    --arg statusValue "$truncated_message" \
-    --arg themeId "$theme_id" \
-    --arg preview "$preview_url" \
-    --arg footer "Shopify Theme Preview" \
-    --argjson ts "$timestamp" \
-    '{
-       text: $text,
+  payload=$(node -e "
+    const text = '${emoji} Shopify ${action_text}';
+    const color = '$color';
+    const repo = '$GITHUB_REPOSITORY';
+    const pr = '$pr_value';
+    const statusTitle = '$status_field_title';
+    const statusValue = \`$truncated_message\`;
+    const themeId = '$theme_id';
+    const preview = '$preview_url';
+    const footer = 'Shopify Theme Preview';
+    const ts = $timestamp;
+    
+    const payload = {
+       text: text,
        attachments: [
          {
-           color: $color,
+           color: color,
            fields: [
-             {title: "Repository", value: $repo, short: true},
-             {title: "PR", value: $pr, short: true}
+             {title: 'Repository', value: repo, short: true},
+             {title: 'PR', value: pr, short: true}
            ],
-           footer: $footer,
-           ts: $ts
+           footer: footer,
+           ts: ts
          }
        ]
+     };
+     
+     if (themeId) {
+       payload.attachments[0].fields.push({title: 'Theme ID', value: themeId, short: true});
      }
-     | if $themeId != "" then (.attachments[0].fields += [{title: "Theme ID", value: $themeId, short: true}]) else . end
-     | if $preview != "" then (.attachments[0].fields += [{title: "Preview URL", value: ("<" + $preview + "|View Preview>"), short: true}]) else . end
-     | if $statusValue != "" then (.attachments[0].fields += [{title: $statusTitle, value: $statusValue, short: false}]) else . end'
-  )
+     if (preview) {
+       payload.attachments[0].fields.push({title: 'Preview URL', value: '<' + preview + '|View Preview>', short: true});
+     }
+     if (statusValue) {
+       payload.attachments[0].fields.push({title: statusTitle, value: statusValue, short: false});
+     }
+     
+     console.log(JSON.stringify(payload));
+  ")
 
   curl -s -X POST -H 'Content-type: application/json' \
     --data "$payload" \
@@ -344,7 +374,7 @@ EOF
   fi
   
   # Escape the comment body for JSON
-  local escaped_body=$(echo "$comment_body" | jq -Rs .)
+  local escaped_body=$(echo "$comment_body" | node -e "const fs=require('fs'); const input=fs.readFileSync(0,'utf8'); console.log(JSON.stringify(input));")
   
   # Post comment
   local response=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" "POST" "{\"body\":${escaped_body}}")
@@ -367,7 +397,7 @@ handle_theme_limit() {
   local theme_count="unknown"
 
   if theme_list=$(shopify theme list --json 2>/dev/null); then
-    theme_count=$(printf '%s' "$theme_list" | jq 'length' 2>/dev/null || echo "unknown")
+    theme_count=$(printf '%s' "$theme_list" | parse_json "" "console.log(Array.isArray(obj) ? obj.length : (obj.themes ? obj.themes.length : 0))" || echo "unknown")
     echo "  Store currently reports ${theme_count} theme(s)"
   else
     echo "  ⚠️ Unable to retrieve theme list"
@@ -379,8 +409,8 @@ handle_theme_limit() {
     [ -z "$pr_json" ] && continue
 
     local pr_number pr_updated
-    pr_number=$(printf '%s' "$pr_json" | jq -r '.number // empty')
-    pr_updated=$(printf '%s' "$pr_json" | jq -r '.updated_at // ""')
+    pr_number=$(printf '%s' "$pr_json" | parse_json "" "console.log(obj.number || '')")
+    pr_updated=$(printf '%s' "$pr_json" | parse_json "" "console.log(obj.updated_at || '')")
 
     if [ -z "$pr_number" ]; then
       continue
@@ -390,7 +420,7 @@ handle_theme_limit() {
       continue
     fi
 
-    if printf '%s' "$pr_json" | jq -e '(.labels // []) | map(.name) | any(. == "preserve-theme")' >/dev/null 2>&1; then
+    if printf '%s' "$pr_json" | parse_json "" "const labels = obj.labels || []; const hasLabel = labels.some(l => l.name === 'preserve-theme'); console.log(hasLabel ? 'true' : '');" | grep -q 'true'; then
       echo "  Skipping PR #${pr_number} (has preserve-theme label)"
       continue
     fi
@@ -429,7 +459,7 @@ EOF
 )
 
       local escaped_body
-      escaped_body=$(echo "$comment_body" | jq -Rs .)
+      escaped_body=$(echo "$comment_body" | node -e "const fs=require('fs'); const input=fs.readFileSync(0,'utf8'); console.log(JSON.stringify(input));")
       github_api "/repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments" "POST" "{\"body\":${escaped_body}}" >/dev/null
 
       echo "✅ Oldest theme deleted from PR #${pr_number}"
@@ -444,7 +474,7 @@ EOF
       fi
       # Try next candidate
     fi
-  done < <(printf '%s' "$open_prs" | jq -c '.[]?')
+  done < <(printf '%s' "$open_prs" | node -e "const fs=require('fs'); const data=fs.readFileSync(0,'utf8'); try{const arr=JSON.parse(data); arr.forEach(item=>console.log(JSON.stringify(item)));}catch(e){}")
 
   if [ "$found_candidate" = false ]; then
     echo "⚠️ No deletable themes found (all may have preserve-theme label or no markers)"
@@ -489,9 +519,9 @@ retry_theme_upload() {
     if [ $status -eq 0 ]; then
       if [ -n "$parsed_json" ]; then
         local error_count
-        error_count=$(echo "$parsed_json" | jq '(.theme.errors // {}) | length')
+        error_count=$(echo "$parsed_json" | parse_json "" "console.log((obj.theme && obj.theme.errors) ? Object.keys(obj.theme.errors).length : 0)")
         local warning_message
-        warning_message=$(echo "$parsed_json" | jq -r '.theme.warning // ""')
+        warning_message=$(echo "$parsed_json" | parse_json "" "console.log((obj.theme && obj.theme.warning) || '')")
 
         if [ "$error_count" -eq 0 ]; then
           if [ -n "$warning_message" ] && [ "$warning_message" != "null" ]; then
@@ -502,7 +532,7 @@ retry_theme_upload() {
           return 0
         fi
 
-        THEME_ERRORS=$(echo "$parsed_json" | jq -r '(.theme.errors // {}) | to_entries | map("• " + .key + ": " + (.value | join(", "))) | join("\n")')
+        THEME_ERRORS=$(echo "$parsed_json" | node -e "const fs=require('fs'); const data=fs.readFileSync(0,'utf8'); try{const obj=JSON.parse(data); const errors=obj.theme?.errors||{}; const lines=Object.entries(errors).map(([k,v])=>'• '+k+': '+(Array.isArray(v)?v.join(', '):v)); console.log(lines.join('\\n'));}catch(e){}")
         [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$OUTPUT"
         retry_count=$max_retries
         break
@@ -597,7 +627,7 @@ create_theme_with_retry() {
       if [ -n "$parsed_json" ]; then
         echo "📋 Parsing theme creation response..."
         local parsed_theme_id
-        parsed_theme_id=$(echo "$parsed_json" | jq -r '.theme.id // empty')
+        parsed_theme_id=$(echo "$parsed_json" | parse_json "" "console.log((obj.theme && obj.theme.id) || '')")
         [ "$parsed_theme_id" = "null" ] && parsed_theme_id=""
         if [ -n "$parsed_theme_id" ]; then
           CREATED_THEME_ID="$parsed_theme_id"
@@ -608,15 +638,15 @@ create_theme_with_retry() {
 
         # Check for errors in the JSON response
         local error_count
-        error_count=$(echo "$parsed_json" | jq '(.theme.errors // {}) | length' 2>/dev/null || echo "0")
+        error_count=$(echo "$parsed_json" | parse_json "" "console.log((obj.theme && obj.theme.errors) ? Object.keys(obj.theme.errors).length : 0)" || echo "0")
         local warning_message
-        warning_message=$(echo "$parsed_json" | jq -r '.theme.warning // ""' 2>/dev/null || echo "")
+        warning_message=$(echo "$parsed_json" | parse_json "" "console.log((obj.theme && obj.theme.warning) || '')" || echo "")
         
         echo "📊 Theme creation result: error_count=${error_count}, has_warnings=$([ -n "$warning_message" ] && [ "$warning_message" != "null" ] && echo "yes" || echo "no")"
 
         if [ "$error_count" -gt 0 ]; then
           echo "❌ Theme was created with ${error_count} error(s)"
-          THEME_ERRORS=$(echo "$parsed_json" | jq -r '(.theme.errors // {}) | to_entries | map("• " + .key + ": " + (.value | join(", "))) | join("\n")')
+          THEME_ERRORS=$(echo "$parsed_json" | node -e "const fs=require('fs'); const data=fs.readFileSync(0,'utf8'); try{const obj=JSON.parse(data); const errors=obj.theme?.errors||{}; const lines=Object.entries(errors).map(([k,v])=>'• '+k+': '+(Array.isArray(v)?v.join(', '):v)); console.log(lines.join('\\n'));}catch(e){}")
           [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$OUTPUT"
           
           echo "📝 Errors found:"
@@ -822,8 +852,7 @@ check_theme_exists_by_name() {
   
   # Look for exact theme name match
   local found_theme_id
-  found_theme_id=$(echo "$theme_list" | jq -r --arg name "$theme_name" \
-    '.themes[]? | select(.name == $name) | .id' | head -1)
+  found_theme_id=$(echo "$theme_list" | node -e "const fs=require('fs'); const data=fs.readFileSync(0,'utf8'); const name='$theme_name'; try{const obj=JSON.parse(data); const themes=obj.themes||obj||[]; const found=Array.isArray(themes)?themes.find(t=>t.name===name):null; console.log(found?.id||'');}catch(e){}" | head -1)
   
   if [ -n "$found_theme_id" ] && [ "$found_theme_id" != "null" ]; then
     echo "✅ Found existing theme with name '${theme_name}' (ID: ${found_theme_id})"
@@ -861,7 +890,7 @@ if [ -n "$EXISTING_THEME_ID" ]; then
   # Verify the theme actually exists on the store
   echo "🔍 Verifying theme ${EXISTING_THEME_ID} exists on the store..."
   THEME_LIST=$(shopify theme list --json 2>&1 || echo "{}")
-  THEME_EXISTS=$(echo "$THEME_LIST" | jq -r --arg id "$EXISTING_THEME_ID" '.themes[]? | select(.id == ($id | tonumber)) | .id' 2>/dev/null || echo "")
+  THEME_EXISTS=$(echo "$THEME_LIST" | node -e "const fs=require('fs'); const data=fs.readFileSync(0,'utf8'); const id='$EXISTING_THEME_ID'; try{const obj=JSON.parse(data); const themes=obj.themes||obj||[]; const found=Array.isArray(themes)?themes.find(t=>t.id==id):null; console.log(found?.id||'');}catch(e){}" || echo "")
   
   if [ -z "$THEME_EXISTS" ]; then
     echo "⚠️ Theme ${EXISTING_THEME_ID} from comments no longer exists on the store!"
@@ -970,8 +999,8 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
   local update_warning_message=""
 
   if [ -n "$update_parsed_json" ]; then
-    update_error_count=$(echo "$update_parsed_json" | jq '(.theme.errors // {}) | length' 2>/dev/null || echo "0")
-    update_warning_message=$(echo "$update_parsed_json" | jq -r '.theme.warning // ""' 2>/dev/null || echo "")
+    update_error_count=$(echo "$update_parsed_json" | parse_json "" "console.log((obj.theme && obj.theme.errors) ? Object.keys(obj.theme.errors).length : 0)" || echo "0")
+    update_warning_message=$(echo "$update_parsed_json" | parse_json "" "console.log((obj.theme && obj.theme.warning) || '')" || echo "")
   fi
   
   # Check if the theme doesn't exist error
@@ -985,7 +1014,7 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
   elif [ $UPDATE_SUCCESS -ne 0 ] || [ "$update_error_count" -gt 0 ]; then
     echo "⚠️ Theme update encountered errors"
     if [ -n "$update_parsed_json" ]; then
-      THEME_ERRORS=$(echo "$update_parsed_json" | jq -r '(.theme.errors // {}) | to_entries | map("• " + .key + ": " + (.value | join(", "))) | join("\n")')
+      THEME_ERRORS=$(echo "$update_parsed_json" | node -e "const fs=require('fs'); const data=fs.readFileSync(0,'utf8'); try{const obj=JSON.parse(data); const errors=obj.theme?.errors||{}; const lines=Object.entries(errors).map(([k,v])=>'• '+k+': '+(Array.isArray(v)?v.join(', '):v)); console.log(lines.join('\\n'));}catch(e){}")
     fi
     [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$UPDATE_OUTPUT"
 
@@ -1105,7 +1134,7 @@ EOF
     fi
     
     # Escape the comment body for JSON
-    ESCAPED_BODY=$(echo "$COMMENT_BODY" | jq -Rs .)
+    ESCAPED_BODY=$(echo "$COMMENT_BODY" | node -e "const fs=require('fs'); const input=fs.readFileSync(0,'utf8'); console.log(JSON.stringify(input));")
     
     # Post comment with preview URL
     echo "💬 Posting preview comment..."
