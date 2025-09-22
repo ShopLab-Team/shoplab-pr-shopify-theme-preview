@@ -28,6 +28,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Protected against malicious inputs
 - Support for fork protection in workflows
 
+## [1.0.7] - 2025-09-22
+
+### Security & Performance Improvements
+- **Security**: Fixed potential code injection vulnerability in JSON parsing
+- **Security**: Added proper shell escaping for all variables used in JavaScript
+- **Performance**: Added parallel API calls to reduce execution time
+- **Performance**: Added caching for theme list to avoid duplicate API calls
+
+### Fixed
+- **Fixed**: Added timeout handling for all API calls (GitHub and Slack)
+- **Fixed**: Improved error handling with retry logic and exponential backoff
+- **Fixed**: Better handling of empty or special character PR titles
+- **Fixed**: Added rate limit detection and automatic retry for GitHub API
+
+### Changed
+- Refactored JSON parsing to use safe, predefined extraction patterns
+- Added `extract_json_value` function for common JSON operations
+- Improved theme name sanitization with multiple fallback strategies
+- All curl commands now have proper timeout settings
+
 ## [1.0.6] - 2025-09-22
 
 ### Fixed

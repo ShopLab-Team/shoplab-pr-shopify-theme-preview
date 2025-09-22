@@ -74,21 +74,53 @@ clean_for_slack() {
 # Helper function: Parse JSON using Node.js instead of jq
 parse_json() {
   local json_input="$1"
-  local query="$2"
+  local json_path="$2"
+  local default_value="${3:-}"
   
   echo "$json_input" | node -e "
     const data = require('fs').readFileSync(0, 'utf8');
     if (!data.trim()) {
-      console.log('');
+      console.log('$default_value');
       process.exit(0);
     }
     try {
       const obj = JSON.parse(data);
-      $query
+      const path = '$json_path'.split('.');
+      let result = obj;
+      for (const key of path) {
+        if (key && result != null) {
+          result = result[key];
+        }
+      }
+      console.log(result != null ? result : '$default_value');
     } catch (error) {
-      console.log('');
+      console.log('$default_value');
     }
-  " 2>/dev/null || echo ""
+  " 2>/dev/null || echo "$default_value"
+}
+
+# Helper function: Safe JSON extraction with specific queries
+extract_json_value() {
+  local json_input="$1"
+  local extraction_type="$2"
+  
+  case "$extraction_type" in
+    "theme_id")
+      echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log((o.theme?.id)||'');}catch(e){console.log('');}"
+      ;;
+    "error_count")
+      echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log((o.theme?.errors)?Object.keys(o.theme.errors).length:0);}catch(e){console.log('0');}"
+      ;;
+    "warning")
+      echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(o.theme?.warning||'');}catch(e){console.log('');}"
+      ;;
+    "format_errors")
+      echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));const e=o.theme?.errors||{};const l=Object.entries(e).map(([k,v])=>'• '+k+': '+(Array.isArray(v)?v.join(', '):v));console.log(l.join('\\n'));}catch(e){console.log('');}"
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
 }
 
 # Helper function: extract the most recent theme marker from PR comments
@@ -195,24 +227,66 @@ cleanup_failed_theme() {
   return 1
 }
 
-# Function to make GitHub API calls
+# Function to make GitHub API calls with retry and timeout
 github_api() {
   local endpoint=$1
   local method=${2:-GET}
   local data=$3
+  local max_retries=3
+  local retry_count=0
+  local timeout=30
   
-  if [ "$method" = "GET" ]; then
-    curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
-      -H "Accept: application/vnd.github.v3+json" \
-      "https://api.github.com${endpoint}"
-  else
-    curl -s -X "$method" \
-      -H "Authorization: token ${GITHUB_TOKEN}" \
-      -H "Accept: application/vnd.github.v3+json" \
-      -H "Content-Type: application/json" \
-      ${data:+-d "$data"} \
-      "https://api.github.com${endpoint}"
-  fi
+  while [ $retry_count -lt $max_retries ]; do
+    local response
+    local status_code
+    
+    if [ "$method" = "GET" ]; then
+      response=$(curl -s -w "\n%{http_code}" --connect-timeout 10 --max-time $timeout \
+        -H "Authorization: token ${GITHUB_TOKEN}" \
+        -H "Accept: application/vnd.github.v3+json" \
+        "https://api.github.com${endpoint}" 2>/dev/null)
+    else
+      response=$(curl -s -w "\n%{http_code}" --connect-timeout 10 --max-time $timeout \
+        -X "$method" \
+        -H "Authorization: token ${GITHUB_TOKEN}" \
+        -H "Accept: application/vnd.github.v3+json" \
+        -H "Content-Type: application/json" \
+        ${data:+-d "$data"} \
+        "https://api.github.com${endpoint}" 2>/dev/null)
+    fi
+    
+    # Extract status code from the last line
+    status_code=$(echo "$response" | tail -1)
+    # Remove status code from response
+    response=$(echo "$response" | sed '$d')
+    
+    # Check for success (2xx status codes)
+    if [[ "$status_code" =~ ^2[0-9][0-9]$ ]]; then
+      echo "$response"
+      return 0
+    fi
+    
+    # Check for rate limiting
+    if [ "$status_code" = "403" ] || [ "$status_code" = "429" ]; then
+      echo "⚠️ GitHub API rate limit hit, waiting 60 seconds..." >&2
+      sleep 60
+      retry_count=$((retry_count + 1))
+      continue
+    fi
+    
+    # For other errors, retry with exponential backoff
+    retry_count=$((retry_count + 1))
+    if [ $retry_count -lt $max_retries ]; then
+      local wait_time=$((2 ** retry_count))
+      echo "⚠️ GitHub API error (status: ${status_code}), retrying in ${wait_time} seconds..." >&2
+      sleep $wait_time
+    else
+      echo "❌ GitHub API request failed after ${max_retries} attempts (status: ${status_code})" >&2
+      return 1
+    fi
+  done
+  
+  return 1
 }
 
 # Function to send Slack notification
@@ -273,16 +347,25 @@ send_slack_notification() {
   local pr_value="<${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}|#${PR_NUMBER}: ${PR_TITLE}>"
   local timestamp=$(date +%s)
 
+  # Escape variables for safe JavaScript string usage
+  local escaped_emoji=$(printf '%s' "$emoji" | sed "s/'/\\\\'/g")
+  local escaped_action_text=$(printf '%s' "$action_text" | sed "s/'/\\\\'/g")
+  local escaped_repo=$(printf '%s' "$GITHUB_REPOSITORY" | sed "s/'/\\\\'/g")
+  local escaped_pr_value=$(printf '%s' "$pr_value" | sed "s/'/\\\\'/g")
+  local escaped_status_title=$(printf '%s' "$status_field_title" | sed "s/'/\\\\'/g")
+  local escaped_theme_id=$(printf '%s' "$theme_id" | sed "s/'/\\\\'/g")
+  local escaped_preview=$(printf '%s' "$preview_url" | sed "s/'/\\\\'/g")
+  
   local payload
   payload=$(node -e "
-    const text = '${emoji} Shopify ${action_text}';
+    const text = '${escaped_emoji} Shopify ${escaped_action_text}';
     const color = '$color';
-    const repo = '$GITHUB_REPOSITORY';
-    const pr = '$pr_value';
-    const statusTitle = '$status_field_title';
+    const repo = '${escaped_repo}';
+    const pr = '${escaped_pr_value}';
+    const statusTitle = '${escaped_status_title}';
     const statusValue = \`$truncated_message\`;
-    const themeId = '$theme_id';
-    const preview = '$preview_url';
+    const themeId = '${escaped_theme_id}';
+    const preview = '${escaped_preview}';
     const footer = 'Shopify Theme Preview';
     const ts = $timestamp;
     
@@ -314,9 +397,11 @@ send_slack_notification() {
      console.log(JSON.stringify(payload));
   ")
 
+  # Send with timeout to prevent hanging
   curl -s -X POST -H 'Content-type: application/json' \
+    --connect-timeout 5 --max-time 10 \
     --data "$payload" \
-    "$SLACK_WEBHOOK_URL" >/dev/null || echo "⚠️ Failed to send Slack notification"
+    "$SLACK_WEBHOOK_URL" >/dev/null 2>&1 || echo "⚠️ Failed to send Slack notification" >&2
 }
 
 # Function to post error comment on PR
@@ -397,7 +482,7 @@ handle_theme_limit() {
   local theme_count="unknown"
 
   if theme_list=$(shopify theme list --json 2>/dev/null); then
-    theme_count=$(printf '%s' "$theme_list" | parse_json "" "console.log(Array.isArray(obj) ? obj.length : (obj.themes ? obj.themes.length : 0))" || echo "unknown")
+    theme_count=$(printf '%s' "$theme_list" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(Array.isArray(o)?o.length:(o.themes?o.themes.length:0));}catch(e){console.log('unknown');}" || echo "unknown")
     echo "  Store currently reports ${theme_count} theme(s)"
   else
     echo "  ⚠️ Unable to retrieve theme list"
@@ -409,8 +494,8 @@ handle_theme_limit() {
     [ -z "$pr_json" ] && continue
 
     local pr_number pr_updated
-    pr_number=$(printf '%s' "$pr_json" | parse_json "" "console.log(obj.number || '')")
-    pr_updated=$(printf '%s' "$pr_json" | parse_json "" "console.log(obj.updated_at || '')")
+    pr_number=$(printf '%s' "$pr_json" | parse_json "number" "")
+    pr_updated=$(printf '%s' "$pr_json" | parse_json "updated_at" "")
 
     if [ -z "$pr_number" ]; then
       continue
@@ -420,7 +505,7 @@ handle_theme_limit() {
       continue
     fi
 
-    if printf '%s' "$pr_json" | parse_json "" "const labels = obj.labels || []; const hasLabel = labels.some(l => l.name === 'preserve-theme'); console.log(hasLabel ? 'true' : '');" | grep -q 'true'; then
+    if printf '%s' "$pr_json" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));const has=(o.labels||[]).some(l=>l.name==='preserve-theme');console.log(has?'true':'');}catch(e){console.log('');}" | grep -q 'true'; then
       echo "  Skipping PR #${pr_number} (has preserve-theme label)"
       continue
     fi
@@ -519,9 +604,9 @@ retry_theme_upload() {
     if [ $status -eq 0 ]; then
       if [ -n "$parsed_json" ]; then
         local error_count
-        error_count=$(echo "$parsed_json" | parse_json "" "console.log((obj.theme && obj.theme.errors) ? Object.keys(obj.theme.errors).length : 0)")
+        error_count=$(echo "$parsed_json" | extract_json_value "" "error_count")
         local warning_message
-        warning_message=$(echo "$parsed_json" | parse_json "" "console.log((obj.theme && obj.theme.warning) || '')")
+        warning_message=$(echo "$parsed_json" | extract_json_value "" "warning")
 
         if [ "$error_count" -eq 0 ]; then
           if [ -n "$warning_message" ] && [ "$warning_message" != "null" ]; then
@@ -532,7 +617,7 @@ retry_theme_upload() {
           return 0
         fi
 
-        THEME_ERRORS=$(echo "$parsed_json" | node -e "const fs=require('fs'); const data=fs.readFileSync(0,'utf8'); try{const obj=JSON.parse(data); const errors=obj.theme?.errors||{}; const lines=Object.entries(errors).map(([k,v])=>'• '+k+': '+(Array.isArray(v)?v.join(', '):v)); console.log(lines.join('\\n'));}catch(e){}")
+        THEME_ERRORS=$(echo "$parsed_json" | extract_json_value "" "format_errors")
         [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$OUTPUT"
         retry_count=$max_retries
         break
@@ -627,7 +712,7 @@ create_theme_with_retry() {
       if [ -n "$parsed_json" ]; then
         echo "📋 Parsing theme creation response..."
         local parsed_theme_id
-        parsed_theme_id=$(echo "$parsed_json" | parse_json "" "console.log((obj.theme && obj.theme.id) || '')")
+        parsed_theme_id=$(echo "$parsed_json" | extract_json_value "" "theme_id")
         [ "$parsed_theme_id" = "null" ] && parsed_theme_id=""
         if [ -n "$parsed_theme_id" ]; then
           CREATED_THEME_ID="$parsed_theme_id"
@@ -638,15 +723,15 @@ create_theme_with_retry() {
 
         # Check for errors in the JSON response
         local error_count
-        error_count=$(echo "$parsed_json" | parse_json "" "console.log((obj.theme && obj.theme.errors) ? Object.keys(obj.theme.errors).length : 0)" || echo "0")
+        error_count=$(echo "$parsed_json" | extract_json_value "" "error_count")
         local warning_message
-        warning_message=$(echo "$parsed_json" | parse_json "" "console.log((obj.theme && obj.theme.warning) || '')" || echo "")
+        warning_message=$(echo "$parsed_json" | extract_json_value "" "warning")
         
         echo "📊 Theme creation result: error_count=${error_count}, has_warnings=$([ -n "$warning_message" ] && [ "$warning_message" != "null" ] && echo "yes" || echo "no")"
 
         if [ "$error_count" -gt 0 ]; then
           echo "❌ Theme was created with ${error_count} error(s)"
-          THEME_ERRORS=$(echo "$parsed_json" | node -e "const fs=require('fs'); const data=fs.readFileSync(0,'utf8'); try{const obj=JSON.parse(data); const errors=obj.theme?.errors||{}; const lines=Object.entries(errors).map(([k,v])=>'• '+k+': '+(Array.isArray(v)?v.join(', '):v)); console.log(lines.join('\\n'));}catch(e){}")
+          THEME_ERRORS=$(echo "$parsed_json" | extract_json_value "" "format_errors")
           [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$OUTPUT"
           
           echo "📝 Errors found:"
@@ -829,12 +914,33 @@ if [ -n "$PR_LABELS" ]; then
   fi
 fi
 
-# Sanitize PR title for theme name
-THEME_NAME=$(printf '%s' "$PR_TITLE" | \
-  tr -cd '[:alnum:][:space:]-_.[]' | \
-  sed -E 's/[[:space:]]+/ /g' | \
-  sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | \
-  cut -c1-50)
+# Sanitize PR title for theme name - handle edge cases
+if [ -z "$PR_TITLE" ]; then
+  THEME_NAME="PR-${PR_NUMBER}"
+else
+  # First, try to extract any ticket/issue reference (like FLASH-123)
+  local ticket_ref=$(echo "$PR_TITLE" | grep -oE '\[?[A-Z]+-[0-9]+\]?' | head -1 | tr -d '[]')
+  
+  # Sanitize the title: keep alphanumeric, space, dash, underscore, dot, brackets
+  THEME_NAME=$(printf '%s' "$PR_TITLE" | \
+    tr -cd '[:alnum:][:space:]-_.[]' | \
+    sed -E 's/[[:space:]]+/ /g' | \
+    sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | \
+    cut -c1-50)
+  
+  # If sanitization resulted in empty string, use ticket reference or fallback
+  if [ -z "$THEME_NAME" ]; then
+    if [ -n "$ticket_ref" ]; then
+      THEME_NAME="$ticket_ref"
+    else
+      THEME_NAME="PR-${PR_NUMBER}"
+    fi
+  fi
+fi
+
+# Ensure theme name is not empty and doesn't start/end with special chars
+THEME_NAME=$(echo "$THEME_NAME" | sed 's/^[^[:alnum:]]*//;s/[^[:alnum:]]*$//')
+[ -z "$THEME_NAME" ] && THEME_NAME="PR-${PR_NUMBER}"
 
 echo "📝 Theme name: ${THEME_NAME}"
 
@@ -865,7 +971,19 @@ check_theme_exists_by_name() {
 
 # Find existing theme information from PR comments
 echo "🔍 Checking for existing theme..."
-COMMENTS=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments")
+
+# Fetch comments and theme list in parallel for better performance
+{
+  COMMENTS=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments") &
+  COMMENTS_PID=$!
+  
+  # Also start fetching theme list early if we might need it
+  THEME_LIST_CACHE=$(shopify theme list --json 2>&1) &
+  THEME_LIST_PID=$!
+} 2>/dev/null
+
+# Wait for comments to finish
+wait $COMMENTS_PID 2>/dev/null || COMMENTS=""
 
 # Count how many theme markers exist in comments for debugging
 MARKER_COUNT=$(printf '%s' "$COMMENTS" | grep -o '<!-- THEME_NAME:.*:ID:[0-9]*:END -->' | wc -l | tr -d ' ')
@@ -889,7 +1007,13 @@ if [ -n "$EXISTING_THEME_ID" ]; then
   
   # Verify the theme actually exists on the store
   echo "🔍 Verifying theme ${EXISTING_THEME_ID} exists on the store..."
-  THEME_LIST=$(shopify theme list --json 2>&1 || echo "{}")
+  
+  # Use cached theme list if available, otherwise fetch it
+  if [ -n "${THEME_LIST_PID:-}" ]; then
+    wait $THEME_LIST_PID 2>/dev/null || THEME_LIST_CACHE="{}"
+  fi
+  THEME_LIST="${THEME_LIST_CACHE:-$(shopify theme list --json 2>&1 || echo "{}")}"
+  
   THEME_EXISTS=$(echo "$THEME_LIST" | node -e "const fs=require('fs'); const data=fs.readFileSync(0,'utf8'); const id='$EXISTING_THEME_ID'; try{const obj=JSON.parse(data); const themes=obj.themes||obj||[]; const found=Array.isArray(themes)?themes.find(t=>t.id==id):null; console.log(found?.id||'');}catch(e){}" || echo "")
   
   if [ -z "$THEME_EXISTS" ]; then
@@ -999,8 +1123,8 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
   local update_warning_message=""
 
   if [ -n "$update_parsed_json" ]; then
-    update_error_count=$(echo "$update_parsed_json" | parse_json "" "console.log((obj.theme && obj.theme.errors) ? Object.keys(obj.theme.errors).length : 0)" || echo "0")
-    update_warning_message=$(echo "$update_parsed_json" | parse_json "" "console.log((obj.theme && obj.theme.warning) || '')" || echo "")
+    update_error_count=$(echo "$update_parsed_json" | extract_json_value "" "error_count")
+    update_warning_message=$(echo "$update_parsed_json" | extract_json_value "" "warning")
   fi
   
   # Check if the theme doesn't exist error
