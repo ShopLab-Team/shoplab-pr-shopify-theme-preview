@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Protected against malicious inputs
 - Support for fork protection in workflows
 
+## [1.0.8] - 2025-09-22
+
+### Fixed
+- **CRITICAL**: Fixed bash syntax error - removed 'local' keyword outside function
+- Script was failing immediately on line 922
+
 ## [1.0.7] - 2025-09-22
 
 ### Security & Performance Improvements
