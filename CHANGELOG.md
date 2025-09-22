@@ -28,6 +28,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Protected against malicious inputs
 - Support for fork protection in workflows
 
+## [1.1.0] - 2025-09-22
+
+### Changed
+- **MAJOR REFACTORING**: Modularized deploy.sh into smaller, focused components
+- Split 1300-line monolithic script into:
+  - Main deploy.sh: 361 lines (core orchestration logic)
+  - lib/common.sh: 154 lines (utilities and JSON parsing)
+  - lib/github.sh: 117 lines (GitHub API functions)
+  - lib/slack.sh: 100 lines (Slack notifications)
+  - lib/theme.sh: 445 lines (theme management)
+- Improved maintainability and code organization
+- Functions are now properly exported for reusability
+- Easier to test individual components
+- Fixed remaining syntax errors from previous versions
+
 ## [1.0.9] - 2025-09-22
 
 ### Fixed
