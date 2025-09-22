@@ -576,7 +576,10 @@ create_theme_with_retry() {
       set -e
 
       LAST_UPLOAD_OUTPUT="$OUTPUT"
-
+      
+      echo "🔍 Checking theme creation output..."
+      
+      # First check if this is a rate limit error
       if echo "$OUTPUT" | grep -qi "limit\|maximum\|exceeded\|too many"; then
         echo "⚠️ Theme limit error detected"
         if [ "$limit_cleanup_attempted" = false ] && handle_theme_limit; then
@@ -593,10 +596,36 @@ create_theme_with_retry() {
         return 1
       fi
 
+      # Extract JSON from the output - Shopify CLI with --json always outputs JSON
+      # even when there are errors, it just mixes it with box-drawing output
       local parsed_json
+      
+      # First try the extract_theme_cli_json function
       parsed_json=$(printf '%s' "$OUTPUT" | extract_theme_cli_json 2>/dev/null || echo "")
+      
+      # If that fails, look for JSON directly - it's always there with --json flag
+      if [ -z "$parsed_json" ]; then
+        echo "⚠️ extract_theme_cli_json failed, extracting JSON directly..."
+        # The JSON is always at the end, after any error boxes
+        # Look for the complete JSON object that starts with {"theme":
+        parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}$' | tail -1 || echo "")
+        
+        # If still not found, try without the $ anchor
+        if [ -z "$parsed_json" ]; then
+          parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}' | tail -1 || echo "")
+        fi
+      fi
+      
+      if [ -n "$parsed_json" ]; then
+        echo "✅ Found JSON response from Shopify CLI"
+      else
+        echo "❌ ERROR: No JSON found in output despite using --json flag"
+        echo "📝 Full output was:"
+        echo "$OUTPUT"
+      fi
 
       if [ -n "$parsed_json" ]; then
+        echo "📋 Parsing theme creation response..."
         local parsed_theme_id
         parsed_theme_id=$(echo "$parsed_json" | jq -r '.theme.id // empty')
         [ "$parsed_theme_id" = "null" ] && parsed_theme_id=""
@@ -607,46 +636,41 @@ create_theme_with_retry() {
           echo "✅ Theme created with ID: ${CREATED_THEME_ID}"
         fi
 
+        # Check for errors in the JSON response
         local error_count
-        error_count=$(echo "$parsed_json" | jq '(.theme.errors // {}) | length')
+        error_count=$(echo "$parsed_json" | jq '(.theme.errors // {}) | length' 2>/dev/null || echo "0")
         local warning_message
-        warning_message=$(echo "$parsed_json" | jq -r '.theme.warning // ""')
+        warning_message=$(echo "$parsed_json" | jq -r '.theme.warning // ""' 2>/dev/null || echo "")
+        
+        echo "📊 Theme creation result: error_count=${error_count}, has_warnings=$([ -n "$warning_message" ] && [ "$warning_message" != "null" ] && echo "yes" || echo "no")"
 
         if [ "$error_count" -gt 0 ]; then
+          echo "❌ Theme was created with ${error_count} error(s)"
           THEME_ERRORS=$(echo "$parsed_json" | jq -r '(.theme.errors // {}) | to_entries | map("• " + .key + ": " + (.value | join(", "))) | join("\n")')
           [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$OUTPUT"
+          
+          echo "📝 Errors found:"
+          echo "$THEME_ERRORS"
 
-          # Check if these are Liquid validation errors (not transient/network errors)
-          # Validation errors contain patterns like "can't be", "must be", "is invalid", etc.
-          local is_validation_error=false
-          if echo "$THEME_ERRORS" | grep -qE "(can't be|must be|is invalid|is required|not allowed|cannot be|exceeds|too |not valid)"; then
-            is_validation_error=true
-            echo "❌ Liquid validation errors detected - these cannot be fixed by retrying"
-          fi
-
-          # Cleanup the failed theme
+          # ALL errors from Shopify theme push are validation errors - don't retry
+          echo "❌ Shopify theme validation errors detected - these cannot be fixed by retrying"
+          
+          # ALWAYS cleanup the failed theme immediately
           if [ -n "$CREATED_THEME_ID" ]; then
-            echo "🧹 Cleaning up theme ${CREATED_THEME_ID} that was created with errors..."
+            echo "🧹 IMMEDIATELY cleaning up theme ${CREATED_THEME_ID} that was created with errors..."
             if cleanup_failed_theme "$CREATED_THEME_ID"; then
-              echo "✅ Failed theme ${CREATED_THEME_ID} has been removed"
+              echo "✅ Failed theme ${CREATED_THEME_ID} has been removed successfully"
               
-              # Only retry if NOT validation errors and we have retries left
-              if [ "$is_validation_error" = false ] && [ $attempt -lt $((max_retries - 1)) ]; then
-                echo "🔄 This appears to be a transient error, will retry creating new theme"
-                CREATED_THEME_ID=""
-                attempt=$((attempt + 1))
-                echo "⚠️ Retrying in 3 seconds..."
-                sleep 3
-                continue
-              fi
-              
-              # Don't include theme ID in error since we cleaned it up
+              # NEVER retry on validation errors - exit immediately
               post_error_comment "$THEME_ERRORS" ""
               local cleaned_errors
               cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
-              send_slack_notification "error" "Theme creation failed with validation errors:\n${cleaned_errors}\n\nThe theme has been cleaned up." "" ""
+              send_slack_notification "error" "Theme creation failed with validation errors:\n${cleaned_errors}\n\nThe failed theme has been cleaned up." "" ""
+              
+              echo "🛑 Stopping - validation errors cannot be fixed by retrying"
+              return 1
             else
-              echo "⚠️ Could not cleanup failed theme ${CREATED_THEME_ID}"
+              echo "⚠️ WARNING: Could not cleanup failed theme ${CREATED_THEME_ID}"
               # Include theme ID since it still exists
               post_error_comment "$THEME_ERRORS" "$CREATED_THEME_ID"
               
@@ -661,30 +685,72 @@ create_theme_with_retry() {
               
               local cleaned_errors
               cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
-              send_slack_notification "error" "Theme creation failed with validation errors:\n${cleaned_errors}\n\nFailed theme could not be cleaned up." "$preview_url" "$CREATED_THEME_ID"
+              send_slack_notification "error" "Theme creation failed with validation errors:\n${cleaned_errors}\n\n⚠️ Failed theme ${CREATED_THEME_ID} could not be cleaned up - manual cleanup required!" "$preview_url" "$CREATED_THEME_ID"
+              
+              echo "🛑 Stopping - validation errors cannot be fixed by retrying"
+              return 1
             fi
           else
             # No theme was created, just post error
+            echo "❌ Theme creation failed completely (no theme ID found)"
             post_error_comment "$THEME_ERRORS" ""
             local cleaned_errors
             cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
             send_slack_notification "error" "Theme creation failed:\n${cleaned_errors}" "" ""
+            return 1
           fi
-          
-          return 1
         fi
 
         if [ -n "$warning_message" ] && [ "$warning_message" != "null" ]; then
+          echo "⚠️ Theme created with warnings: $warning_message"
           THEME_ERRORS="$warning_message"
           export THEME_ERRORS
           return 0
         fi
 
         if [ -n "$CREATED_THEME_ID" ]; then
+          echo "✅ Theme created successfully without errors!"
           return 0
         fi
+        
+        # If we get here, no theme ID was found in the JSON
+        echo "❌ ERROR: JSON response didn't contain a theme ID"
+        echo "📝 Full JSON was: $parsed_json"
+      else
+        # No JSON found - this should not happen with --json flag!
+        echo "❌ CRITICAL ERROR: No JSON response despite using --json flag"
+        echo "📝 Checking raw output for any errors or theme ID..."
+        
+        # Try to find a theme ID in the raw output
+        local potential_theme_id
+        potential_theme_id=$(echo "$OUTPUT" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+        
+        if [ -n "$potential_theme_id" ]; then
+          echo "🔍 Found theme ID in output: ${potential_theme_id}"
+          echo "🧹 Cleaning up theme ${potential_theme_id} since we can't determine its status..."
+          if cleanup_failed_theme "$potential_theme_id"; then
+            echo "✅ Cleaned up theme ${potential_theme_id}"
+          else
+            echo "⚠️ Could not cleanup theme ${potential_theme_id} - manual cleanup may be required"
+          fi
+        fi
+        
+        # Extract any visible errors from the output
+        THEME_ERRORS=$(echo "$OUTPUT" | grep -E "error|Error|failed|Failed|can't|cannot|invalid" | head -20)
+        [ -z "$THEME_ERRORS" ] && THEME_ERRORS="Theme creation failed - no JSON response received"
+        
+        # Post error and exit - DO NOT RETRY
+        post_error_comment "$THEME_ERRORS" ""
+        local cleaned_errors
+        cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
+        send_slack_notification "error" "Theme creation failed - no proper response from Shopify CLI:\n${cleaned_errors}" "" ""
+        
+        echo "🛑 Stopping - cannot proceed without proper response from Shopify CLI"
+        return 1
       fi
-
+      
+      # This point should NEVER be reached anymore
+      echo "❌ UNEXPECTED: Reached retry logic - this should not happen!"
       attempt=$((attempt + 1))
       if [ $attempt -lt $max_retries ]; then
         echo "⚠️ Theme creation failed, retrying in 3 seconds..."
