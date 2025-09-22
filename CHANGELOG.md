@@ -28,6 +28,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Protected against malicious inputs
 - Support for fork protection in workflows
 
+## [1.0.5] - 2025-09-22
+
+### Fixed
+- **Critical**: Fixed theme marker extraction to always use most recently CREATED theme
+- **Fixed**: Multiple theme IDs in comments now handled correctly
+- **Fixed**: Uses `created_at` timestamp instead of `updated_at` to avoid picking old themes from edited comments
+- **Added**: Debug logging to show how many theme markers were found and which was selected
+
+### Changed
+- Theme marker extraction now collects all markers and sorts by creation time
+- Always selects the most recently created theme, not the most recently edited comment
+- Better logging to track which theme ID is being selected from multiple markers
+
 ## [1.0.4] - 2025-09-22
 
 ### Fixed

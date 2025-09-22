@@ -89,42 +89,44 @@ try {
   process.exit(0);
 }
 
-const markers = [];
+// Collect all theme markers from all comments with their creation timestamps
+const allMarkers = [];
 const markerRegex = /<!-- THEME_NAME:(.+?):ID:(\d+):END -->/g;
 
 for (const comment of comments) {
   if (!comment || typeof comment.body !== "string") {
     continue;
   }
-
+  
+  // Use created_at for when the comment (and theme) was actually created
+  // Don't use updated_at as edits to comments shouldn't affect theme order
+  const timestamp = comment.created_at || "";
+  
   let match;
+  markerRegex.lastIndex = 0; // Reset regex state
   while ((match = markerRegex.exec(comment.body)) !== null) {
-    markers.push({
+    allMarkers.push({
       name: match[1],
       id: match[2],
-      timestamp: comment.updated_at || comment.created_at || ""
+      timestamp: timestamp
     });
   }
 }
 
-if (!markers.length) {
+// If no markers found, exit
+if (allMarkers.length === 0) {
   process.exit(0);
 }
 
-markers.sort((a, b) => {
-  if (a.timestamp && b.timestamp) {
-    return new Date(a.timestamp) - new Date(b.timestamp);
-  }
-  if (a.timestamp) {
-    return -1;
-  }
-  if (b.timestamp) {
-    return 1;
-  }
-  return 0;
+// Sort markers by creation timestamp (newest first)
+allMarkers.sort((a, b) => {
+  const aTime = new Date(a.timestamp || 0);
+  const bTime = new Date(b.timestamp || 0);
+  return bTime - aTime; // Descending order (newest first)
 });
 
-const latest = markers[markers.length - 1];
+// Return the most recently created theme marker
+const latest = allMarkers[0];
 process.stdout.write(`${latest.name}|${latest.id}`);
 NODE
 }
@@ -806,24 +808,85 @@ THEME_NAME=$(printf '%s' "$PR_TITLE" | \
 
 echo "📝 Theme name: ${THEME_NAME}"
 
+# Helper function: check if theme exists by name in Shopify store
+check_theme_exists_by_name() {
+  local theme_name="$1"
+  local theme_list
+  
+  echo "🔍 Checking if theme with name '${theme_name}' exists in Shopify store..."
+  
+  if ! theme_list=$(shopify theme list --json 2>/dev/null); then
+    echo "⚠️ Could not retrieve theme list from Shopify"
+    return 1
+  fi
+  
+  # Look for exact theme name match
+  local found_theme_id
+  found_theme_id=$(echo "$theme_list" | jq -r --arg name "$theme_name" \
+    '.themes[]? | select(.name == $name) | .id' | head -1)
+  
+  if [ -n "$found_theme_id" ] && [ "$found_theme_id" != "null" ]; then
+    echo "✅ Found existing theme with name '${theme_name}' (ID: ${found_theme_id})"
+    echo "$found_theme_id"
+    return 0
+  fi
+  
+  return 1
+}
+
 # Find existing theme information from PR comments
 echo "🔍 Checking for existing theme..."
 COMMENTS=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments")
+
+# Count how many theme markers exist in comments for debugging
+MARKER_COUNT=$(printf '%s' "$COMMENTS" | grep -o '<!-- THEME_NAME:.*:ID:[0-9]*:END -->' | wc -l | tr -d ' ')
+if [ "$MARKER_COUNT" -gt 0 ]; then
+  echo "📊 Found ${MARKER_COUNT} theme marker(s) in PR comments"
+fi
 
 THEME_MARKER=$(printf '%s' "$COMMENTS" | extract_latest_theme_marker)
 
 if [ -n "$THEME_MARKER" ]; then
   EXISTING_THEME_NAME=${THEME_MARKER%|*}
   EXISTING_THEME_ID=${THEME_MARKER##*|}
+  echo "🎯 Selected most recent theme marker: ${EXISTING_THEME_NAME} (ID: ${EXISTING_THEME_ID})"
 fi
 
 if [ -n "$EXISTING_THEME_ID" ]; then
-  echo "✅ Found existing theme ID: ${EXISTING_THEME_ID}"
+  echo "✅ Will attempt to use theme ID: ${EXISTING_THEME_ID}"
   if [ -n "$EXISTING_THEME_NAME" ] && [ "$EXISTING_THEME_NAME" != "$THEME_NAME" ]; then
-    echo "ℹ️ Existing theme name on store: ${EXISTING_THEME_NAME}"
+    echo "ℹ️ Note: Theme name differs from PR title"
+  fi
+  
+  # Verify the theme actually exists on the store
+  echo "🔍 Verifying theme ${EXISTING_THEME_ID} exists on the store..."
+  THEME_LIST=$(shopify theme list --json 2>&1 || echo "{}")
+  THEME_EXISTS=$(echo "$THEME_LIST" | jq -r --arg id "$EXISTING_THEME_ID" '.themes[]? | select(.id == ($id | tonumber)) | .id' 2>/dev/null || echo "")
+  
+  if [ -z "$THEME_EXISTS" ]; then
+    echo "⚠️ Theme ${EXISTING_THEME_ID} from comments no longer exists on the store!"
+    
+    # Try to find theme by exact name match as fallback
+    if FOUND_THEME_ID=$(check_theme_exists_by_name "$THEME_NAME"); then
+      echo "✅ Using theme ID ${FOUND_THEME_ID} found by name match"
+      EXISTING_THEME_ID="$FOUND_THEME_ID"
+    else
+      echo "📝 No matching theme found by name either, will create new theme"
+      EXISTING_THEME_ID=""
+    fi
+  else
+    echo "✅ Theme ${EXISTING_THEME_ID} confirmed to exist on store"
   fi
 else
-  echo "📝 No existing theme found, will create new one"
+  echo "📝 No existing theme found in comments"
+  
+  # Check if a theme with this exact name already exists in the store
+  if FOUND_THEME_ID=$(check_theme_exists_by_name "$THEME_NAME"); then
+    echo "✅ Found existing theme by name match, will update it"
+    EXISTING_THEME_ID="$FOUND_THEME_ID"
+  else
+    echo "📝 No existing theme found by name, will create new one"
+  fi
 fi
 
 
@@ -836,22 +899,7 @@ fi
 
 # Deploy or update theme
 if [ -n "${EXISTING_THEME_ID}" ]; then
-  echo "🔄 Updating existing theme ID: ${EXISTING_THEME_ID}"
-  
-  # First verify the theme actually exists
-  echo "🔍 Verifying theme ${EXISTING_THEME_ID} exists on the store..."
-  THEME_LIST=$(shopify theme list --json 2>&1 || echo "{}")
-  THEME_EXISTS=$(echo "$THEME_LIST" | jq -r --arg id "$EXISTING_THEME_ID" '.themes[]? | select(.id == ($id | tonumber)) | .id' 2>/dev/null || echo "")
-  
-  if [ -z "$THEME_EXISTS" ]; then
-    echo "⚠️ Theme ${EXISTING_THEME_ID} no longer exists on the store!"
-    echo "📝 Will create a new theme instead..."
-    EXISTING_THEME_ID=""
-  fi
-fi
-
-if [ -n "${EXISTING_THEME_ID}" ]; then
-  echo "✅ Theme ${EXISTING_THEME_ID} verified to exist"
+  echo "🔄 Preparing to update existing theme ID: ${EXISTING_THEME_ID}"
   
   # Check if rebuild-theme label is present - if so, pull settings first
   if [ "$HAS_REBUILD_LABEL" = "true" ]; then
