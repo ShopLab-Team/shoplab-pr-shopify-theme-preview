@@ -28,6 +28,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Protected against malicious inputs
 - Support for fork protection in workflows
 
+## [1.0.9] - 2025-09-22
+
+### Fixed
+- **CRITICAL**: Fixed extract_json_value function to properly read from stdin
+- **CRITICAL**: Fixed theme name sanitization - brackets are no longer stripped
+- **CRITICAL**: Removed retry logic that was creating duplicate themes
+- Added manual theme ID extraction as fallback when JSON parsing fails
+- Ensured immediate cleanup of themes created with errors
+- Only retry for rate limit errors (with 30s delay), not validation errors
+
+### Changed
+- create_theme_with_retry now only retries for rate limits, not validation errors
+- Theme names preserve brackets and special characters (only whitespace is trimmed)
+
 ## [1.0.8] - 2025-09-22
 
 ### Fixed
