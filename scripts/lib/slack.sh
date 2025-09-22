@@ -49,7 +49,8 @@ send_slack_notification() {
     const action_text = process.env.GITHUB_EVENT_NAME === 'pull_request' ? 'PR' : 'Action';
     const repo = '$GITHUB_REPOSITORY'.replace(/\\\\'/g, \"'\");
     const pr_value = process.env.PR_NUMBER || 'N/A';
-    const status_title = '$status'.replace(/\\\\'/g, \"'\") === 'success' ? 'Status' : 'Error';
+    const status = '$status'.replace(/\\\\'/g, \"'\");
+    const status_title = status === 'success' ? 'Status' : 'Error';
     const message = '$escaped_message'.replace(/\\\\'/g, \"'\");
     const color = '$color';
     const theme_id = '$theme_id'.replace(/\\\\'/g, \"'\");

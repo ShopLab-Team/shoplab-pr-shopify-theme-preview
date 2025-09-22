@@ -27,10 +27,13 @@ check_theme_exists_by_name() {
   
   echo "🔍 Checking if theme with name '${theme_name}' exists in Shopify store..."
   
-  if ! theme_list=$(shopify theme list --json 2>/dev/null); then
+  if ! theme_list=$(shopify theme list --json 2>&1); then
     echo "⚠️ Could not retrieve theme list from Shopify"
     return 1
   fi
+  
+  # Debug: show first 500 chars of theme list
+  echo "📋 Theme list response (first 500 chars): ${theme_list:0:500}" >&2
   
   # Look for exact theme name match
   local found_theme_id
@@ -40,14 +43,45 @@ check_theme_exists_by_name() {
     const name = process.argv[1];
     try {
       const obj = JSON.parse(data);
-      const themes = obj.themes || obj || [];
-      const found = Array.isArray(themes) ? themes.find(t => t.name === name) : null;
+      let themes;
+      // Handle both array and object formats
+      if (Array.isArray(obj)) {
+        themes = obj;
+      } else if (obj && obj.themes) {
+        themes = obj.themes;
+      } else {
+        themes = [];
+      }
+      console.error('Debug: Found ' + themes.length + ' themes');
+      if (themes.length > 0) {
+        console.error('Debug: First theme name: ' + themes[0].name);
+      }
+      const found = themes.find(t => t.name === name);
+      if (found) {
+        console.error('Debug: Found matching theme: ' + JSON.stringify(found));
+      } else {
+        console.error('Debug: No match for: ' + name);
+      }
       console.log(found?.id || '');
     } catch(e) {
       console.error('Error parsing theme list:', e.message);
+      console.error('Data received:', data.substring(0, 200));
       console.log('');
     }
-  " -- "$theme_name" 2>/dev/null | head -1)
+  " -- "$theme_name" 2>&1 | {
+    # Capture both stdout and stderr
+    local output
+    local debug_output=""
+    while IFS= read -r line; do
+      if [[ "$line" =~ ^Debug:|^Error\ parsing|^Data\ received: ]]; then
+        debug_output="${debug_output}${line}\n"
+      else
+        output="$line"
+      fi
+    done
+    [ -n "$debug_output" ] && echo -e "$debug_output" >&2
+    echo "$output"
+  })
   
   if [ -n "$found_theme_id" ] && [ "$found_theme_id" != "null" ]; then
     echo "✅ Found existing theme with name '${theme_name}' (ID: ${found_theme_id})"
