@@ -42,53 +42,36 @@ send_slack_notification() {
       ;;
   esac
   
-  # Create Slack payload using Node.js for proper JSON encoding
+  # Build simple Slack message
+  local fields=""
+  
+  # Add theme ID field if provided
+  if [ -n "$theme_id" ]; then
+    fields="${fields}*Theme ID:* \`${theme_id}\`\\n"
+  fi
+  
+  # Add preview URL if provided
+  if [ -n "$preview_url" ]; then
+    fields="${fields}*Preview:* <${preview_url}|View Preview>\\n"
+  fi
+  
+  # Add message if provided
+  if [ -n "$escaped_message" ]; then
+    fields="${fields}\\n${escaped_message}"
+  fi
+  
+  # Create simple JSON payload
+  local text="${emoji} Shopify Theme ${status} for PR #${PR_NUMBER}\\n${fields}"
+  
   local payload
-  payload=$(node -e "
-    const emoji = '$emoji'.replace(/\\\\'/g, \"'\");
-    const action_text = process.env.GITHUB_EVENT_NAME === 'pull_request' ? 'PR' : 'Action';
-    const repo = '$GITHUB_REPOSITORY'.replace(/\\\\'/g, \"'\");
-    const pr_value = process.env.PR_NUMBER || 'N/A';
-    const status = '$status'.replace(/\\\\'/g, \"'\");
-    const status_title = status === 'success' ? 'Status' : 'Error';
-    const message = '$escaped_message'.replace(/\\\\'/g, \"'\");
-    const color = '$color';
-    const theme_id = '$theme_id'.replace(/\\\\'/g, \"'\");
-    const preview = '$preview_url'.replace(/\\\\'/g, \"'\");
-    const ts = Math.floor(Date.now() / 1000);
-    
-    const footer = process.env.GITHUB_SERVER_URL + '/' + repo + '/actions/runs/' + process.env.GITHUB_RUN_ID;
-    
-    const payload = {
-      username: 'Shopify Theme Bot',
-      icon_emoji: ':shopify:',
-      attachments: [
-        {
-          color: color,
-          fallback: emoji + ' Theme deployment ' + status + ' for ' + action_text + ' #' + pr_value,
-          pretext: emoji + ' *Shopify Theme Deployment*',
-          fields: [
-            {title: 'Repository', value: '<' + process.env.GITHUB_SERVER_URL + '/' + repo + '|' + repo + '>', short: true},
-            {title: action_text + ' Number', value: '<' + process.env.GITHUB_SERVER_URL + '/' + repo + '/pull/' + pr_value + '|#' + pr_value + '>', short: true}
-          ],
-          footer: footer,
-          ts: ts
-        }
-      ]
-    };
-    
-    if (theme_id) {
-      payload.attachments[0].fields.push({title: 'Theme ID', value: theme_id, short: true});
-    }
-    if (preview) {
-      payload.attachments[0].fields.push({title: 'Preview URL', value: '<' + preview + '|View Preview>', short: true});
-    }
-    if (message) {
-      payload.attachments[0].fields.push({title: status_title, value: message, short: false});
-    }
-    
-    console.log(JSON.stringify(payload));
- ")
+  payload=$(cat <<EOF
+{
+  "text": "$text",
+  "username": "Shopify Theme Bot",
+  "icon_emoji": ":shopify:"
+}
+EOF
+)
 
   # Send with timeout to prevent hanging
   curl -s -X POST -H 'Content-type: application/json' \
