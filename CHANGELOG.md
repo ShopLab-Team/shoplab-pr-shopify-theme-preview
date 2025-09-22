@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Protected against malicious inputs
 - Support for fork protection in workflows
 
+## [1.1.3] - 2025-09-22
+
+### Fixed
+- **CRITICAL**: Completely removed ALL retry logic from upload_theme function
+- Fixed multiple "local: can only be used in a function" errors in deploy.sh
+- Fixed theme ID contamination where debug messages were included in the ID
+- Theme uploads now fail immediately on error with NO RETRIES as requested
+
 ## [1.1.2] - 2025-09-22
 
 ### Fixed
