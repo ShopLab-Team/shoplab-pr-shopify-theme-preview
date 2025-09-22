@@ -27,6 +27,9 @@ if [ -z "$PR_TITLE" ]; then
   exit 1
 fi
 
+LAST_DELETE_OUTPUT=""
+LAST_FOUND_THEME_ID=""
+
 # Function to send Slack notification
 send_slack_notification() {
   local status=$1
@@ -87,6 +90,64 @@ github_api() {
     "https://api.github.com${endpoint}"
 }
 
+# Helper function: extract the most recent theme marker from PR comments
+extract_latest_theme_marker() {
+  local input_json
+  input_json=$(cat)
+
+  COMMENTS_JSON="$input_json" node - <<'NODE'
+const data = process.env.COMMENTS_JSON || "";
+if (!data.trim()) {
+  process.exit(0);
+}
+
+let comments;
+try {
+  comments = JSON.parse(data);
+} catch (error) {
+  process.exit(0);
+}
+
+const markers = [];
+const markerRegex = /<!-- THEME_NAME:(.+?):ID:(\d+):END -->/g;
+
+for (const comment of comments) {
+  if (!comment || typeof comment.body !== "string") {
+    continue;
+  }
+
+  let match;
+  while ((match = markerRegex.exec(comment.body)) !== null) {
+    markers.push({
+      name: match[1],
+      id: match[2],
+      timestamp: comment.updated_at || comment.created_at || ""
+    });
+  }
+}
+
+if (!markers.length) {
+  process.exit(0);
+}
+
+markers.sort((a, b) => {
+  if (a.timestamp && b.timestamp) {
+    return new Date(a.timestamp) - new Date(b.timestamp);
+  }
+  if (a.timestamp) {
+    return -1;
+  }
+  if (b.timestamp) {
+    return 1;
+  }
+  return 0;
+});
+
+const latest = markers[markers.length - 1];
+process.stdout.write(`${latest.name}|${latest.id}`);
+NODE
+}
+
 # Sanitize PR title for theme name (must match deploy.sh logic)
 THEME_NAME=$(printf '%s' "$PR_TITLE" | \
   tr -cd '[:alnum:][:space:]-_.[]' | \
@@ -94,60 +155,58 @@ THEME_NAME=$(printf '%s' "$PR_TITLE" | \
   sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | \
   cut -c1-50)
 
-echo "📝 Looking for theme: ${THEME_NAME}"
+echo "📝 Looking for theme associated with this PR (default name: ${THEME_NAME})"
 
-# Escape special regex characters in theme name for grep patterns
-THEME_NAME_ESCAPED=$(printf '%s' "$THEME_NAME" | sed 's/[][\.^$()|*+?{}]/\\&/g')
-
-# Find theme ID from PR comments
-echo "🔍 Looking for theme ID in PR comments..."
+echo "🔍 Looking for theme marker in PR comments..."
 COMMENTS=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments")
 
-# Parse comments for theme ID using the theme name
 THEME_ID=""
-while IFS= read -r line; do
-  # Check if line contains our theme marker using fixed string matching
-  if echo "$line" | grep -F "<!-- THEME_NAME:${THEME_NAME}:ID:" | grep -q ":END -->"; then
-    # Extract the full theme data using escaped theme name for regex
-    THEME_DATA=$(echo "$line" | grep -o "<!-- THEME_NAME:${THEME_NAME_ESCAPED}:ID:[0-9]*:END -->" 2>/dev/null || echo "")
-    if [ -n "$THEME_DATA" ]; then
-      # Extract just the ID number
-      THEME_ID=$(echo "$THEME_DATA" | sed 's/.*:ID:\([0-9]*\):END.*/\1/')
-      break
-    fi
-  fi
-done <<< "$COMMENTS"
+THEME_NAME_FROM_COMMENT=""
+
+THEME_MARKER=$(printf '%s' "$COMMENTS" | extract_latest_theme_marker)
+
+if [ -n "$THEME_MARKER" ]; then
+  THEME_NAME_FROM_COMMENT=${THEME_MARKER%|*}
+  THEME_ID=${THEME_MARKER##*|}
+  echo "✅ Found theme marker in PR comments (name: ${THEME_NAME_FROM_COMMENT}, ID: ${THEME_ID})"
+else
+  echo "ℹ️ No theme marker found in PR comments"
+fi
 
 # Function to delete theme by ID
 delete_theme_by_id() {
   local theme_id="$1"
   echo "🗑️ Attempting to delete theme with ID: ${theme_id}"
   
-  # Use -t flag as per Shopify CLI docs and capture output
-  DELETE_OUTPUT=$(shopify theme delete -t "${theme_id}" --force 2>&1)
-  DELETE_EXIT_CODE=$?
+  local output=""
+  local status=0
+  set +e
+  output=$(shopify theme delete -t "${theme_id}" --force 2>&1)
+  status=$?
+  set -e
+  LAST_DELETE_OUTPUT="$output"
   
-  # Check if deletion was successful
-  if [ $DELETE_EXIT_CODE -eq 0 ]; then
+  if [ $status -eq 0 ]; then
     echo "✅ Theme ${theme_id} deleted successfully"
+    LAST_FOUND_THEME_ID="$theme_id"
     return 0
-  elif echo "$DELETE_OUTPUT" | grep -q "Theme.*deleted"; then
-    echo "✅ Theme ${theme_id} deleted successfully"
-    return 0
-  elif echo "$DELETE_OUTPUT" | grep -q "Theme.*not found"; then
-    echo "⚠️ Theme ${theme_id} not found"
-    return 1
-  else
-    echo "⚠️ Could not delete theme ${theme_id}"
-    echo "Debug output: $DELETE_OUTPUT"
-    return 1
   fi
+  
+  if echo "$output" | grep -qi "No themes" || echo "$output" | grep -qi "not found"; then
+    echo "⚠️ Theme ${theme_id} not found"
+    return 2
+  fi
+  
+  echo "⚠️ Could not delete theme ${theme_id}"
+  echo "Debug output: $output"
+  return 1
 }
 
 # Function to find and delete theme by name
 find_and_delete_by_name() {
   local theme_name="$1"
-  echo "🔍 Searching for theme by exact name match: ${theme_name}"
+  local label="${2:-exact name match}"
+  echo "🔍 Searching for theme by exact name match (${label}): ${theme_name}"
   
   # Get list of all themes
   THEME_LIST=$(shopify theme list --json 2>/dev/null || echo "[]")
@@ -175,7 +234,7 @@ find_and_delete_by_name() {
     if delete_theme_by_id "$FOUND_THEME_ID"; then
       return 0
     else
-      return 1
+      return $?
     fi
   else
     echo "ℹ️ No theme found with name: ${theme_name}"
@@ -185,30 +244,51 @@ find_and_delete_by_name() {
 
 # Main deletion logic
 DELETED=false
+DELETED_THEME_ID=""
+DELETED_THEME_NAME=""
 
 if [ -n "$THEME_ID" ]; then
   echo "✅ Found theme ID from PR comments: ${THEME_ID}"
-  
-  # Try to delete by ID first
+  if [ -n "$THEME_NAME_FROM_COMMENT" ]; then
+    echo "ℹ️ Comment recorded theme name: ${THEME_NAME_FROM_COMMENT}"
+  fi
+
   if delete_theme_by_id "$THEME_ID"; then
     echo "🎉 Theme deleted successfully using ID from comments"
     DELETED=true
+    DELETED_THEME_ID="$THEME_ID"
+    DELETED_THEME_NAME="${THEME_NAME_FROM_COMMENT:-$THEME_NAME}"
   else
-    echo "⚠️ Could not delete theme by ID, trying fallback search by name..."
-    
-    # Fallback: try to find and delete by exact name match
-    if find_and_delete_by_name "$THEME_NAME"; then
-      echo "🎉 Theme deleted successfully using name match"
-      DELETED=true
+    delete_status=$?
+    if [ $delete_status -ne 2 ]; then
+      echo "$LAST_DELETE_OUTPUT"
     fi
+    echo "⚠️ Could not delete theme by ID, attempting fallback search..."
   fi
 else
-  echo "⚠️ No theme ID found in PR comments, searching by name..."
-  
-  # Try to find and delete by exact name match
-  if find_and_delete_by_name "$THEME_NAME"; then
-    echo "🎉 Theme deleted successfully using name match"
+  echo "⚠️ No theme ID found in PR comments"
+fi
+
+if [ "$DELETED" = false ] && [ -n "$THEME_NAME_FROM_COMMENT" ]; then
+  LAST_FOUND_THEME_ID=""
+  if find_and_delete_by_name "$THEME_NAME_FROM_COMMENT" "comment marker"; then
+    echo "🎉 Theme deleted successfully using name from comment marker"
     DELETED=true
+    DELETED_THEME_ID=${LAST_FOUND_THEME_ID:-$DELETED_THEME_ID}
+    DELETED_THEME_NAME="$THEME_NAME_FROM_COMMENT"
+  fi
+fi
+
+if [ "$DELETED" = false ] && { [ -z "$THEME_NAME_FROM_COMMENT" ] || [ "$THEME_NAME_FROM_COMMENT" != "$THEME_NAME" ]; }; then
+  # As a final fallback, try the sanitized PR title (in case the PR title changed)
+  LAST_FOUND_THEME_ID=""
+  if find_and_delete_by_name "$THEME_NAME" "sanitized PR title"; then
+    echo "🎉 Theme deleted successfully using sanitized PR title"
+    DELETED=true
+    DELETED_THEME_ID=${LAST_FOUND_THEME_ID:-$DELETED_THEME_ID}
+    if [ -z "$DELETED_THEME_NAME" ]; then
+      DELETED_THEME_NAME="$THEME_NAME"
+    fi
   fi
 fi
 
@@ -217,7 +297,8 @@ if [ "$DELETED" = false ]; then
   echo "ℹ️ No theme was deleted (theme may have been manually deleted or never created)"
   send_slack_notification "info" "No theme found to delete (may have been manually deleted or never created)" ""
 else
-  send_slack_notification "success" "Theme ${THEME_ID:-$THEME_NAME} deleted successfully" "${THEME_ID:-}"
+  IDENTIFIER="${DELETED_THEME_ID:-$DELETED_THEME_NAME}"
+  send_slack_notification "success" "Theme ${IDENTIFIER} deleted successfully" "${DELETED_THEME_ID:-}"
 fi
 
 echo "🎉 Cleanup complete!"

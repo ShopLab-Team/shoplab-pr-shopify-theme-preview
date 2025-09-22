@@ -29,10 +29,94 @@ fi
 
 # Initialize variables
 EXISTING_THEME_ID=""
+EXISTING_THEME_NAME=""
 EXISTING_COMMENT_ID=""
 CREATED_THEME_ID=""
 THEME_ERRORS=""
 THEME_WARNINGS=""
+LAST_DELETE_OUTPUT=""
+
+# Helper function: extract the most recent theme marker from PR comments
+extract_latest_theme_marker() {
+  local input_json
+  input_json=$(cat)
+
+  COMMENTS_JSON="$input_json" node - <<'NODE'
+const data = process.env.COMMENTS_JSON || "";
+if (!data.trim()) {
+  process.exit(0);
+}
+
+let comments;
+try {
+  comments = JSON.parse(data);
+} catch (error) {
+  process.exit(0);
+}
+
+const markers = [];
+const markerRegex = /<!-- THEME_NAME:(.+?):ID:(\d+):END -->/g;
+
+for (const comment of comments) {
+  if (!comment || typeof comment.body !== "string") {
+    continue;
+  }
+
+  let match;
+  while ((match = markerRegex.exec(comment.body)) !== null) {
+    markers.push({
+      name: match[1],
+      id: match[2],
+      timestamp: comment.updated_at || comment.created_at || ""
+    });
+  }
+}
+
+if (!markers.length) {
+  process.exit(0);
+}
+
+markers.sort((a, b) => {
+  if (a.timestamp && b.timestamp) {
+    return new Date(a.timestamp) - new Date(b.timestamp);
+  }
+  if (a.timestamp) {
+    return -1;
+  }
+  if (b.timestamp) {
+    return 1;
+  }
+  return 0;
+});
+
+const latest = markers[markers.length - 1];
+process.stdout.write(`${latest.name}|${latest.id}`);
+NODE
+}
+
+# Helper function: delete a theme by ID while capturing CLI output
+delete_theme_by_id() {
+  local theme_id="$1"
+  local output=""
+  local status=0
+
+  set +e
+  output=$(shopify theme delete -t "${theme_id}" --force 2>&1)
+  status=$?
+  set -e
+
+  LAST_DELETE_OUTPUT="$output"
+
+  if [ $status -eq 0 ]; then
+    return 0
+  fi
+
+  if echo "$output" | grep -qi 'No themes' || echo "$output" | grep -qi 'not found'; then
+    return 2
+  fi
+
+  return 1
+}
 
 # Function to make GitHub API calls
 github_api() {
@@ -243,64 +327,63 @@ EOF
 # Function to find and delete the oldest theme from open PRs
 handle_theme_limit() {
   echo "⚠️ Theme limit reached, searching for oldest theme to remove..."
-  
-  # Get all open PRs
-  OPEN_PRS=$(github_api "/repos/${GITHUB_REPOSITORY}/pulls?state=open&sort=updated&direction=asc&per_page=100")
-  
-  # Arrays to store PR info and theme IDs
-  declare -a PR_NUMBERS
-  declare -a PR_THEME_IDS
-  declare -a PR_THEME_NAMES
-  declare -a PR_UPDATED_DATES
-  
-  # Parse each PR to find themes
-  echo "$OPEN_PRS" | jq -r '.[] | @json' | while IFS= read -r pr_json; do
-    pr_number=$(echo "$pr_json" | jq -r '.number')
-    pr_updated=$(echo "$pr_json" | jq -r '.updated_at')
-    
-    # Skip current PR
+
+  local open_prs
+  open_prs=$(github_api "/repos/${GITHUB_REPOSITORY}/pulls?state=open&sort=updated&direction=asc&per_page=100")
+
+  local theme_list
+  local theme_count="unknown"
+
+  if theme_list=$(shopify theme list --json 2>/dev/null); then
+    theme_count=$(printf '%s' "$theme_list" | jq 'length' 2>/dev/null || echo "unknown")
+    echo "  Store currently reports ${theme_count} theme(s)"
+  else
+    echo "  ⚠️ Unable to retrieve theme list"
+  fi
+
+  local found_candidate=false
+
+  while IFS= read -r pr_json; do
+    [ -z "$pr_json" ] && continue
+
+    local pr_number pr_updated
+    pr_number=$(printf '%s' "$pr_json" | jq -r '.number // empty')
+    pr_updated=$(printf '%s' "$pr_json" | jq -r '.updated_at // ""')
+
+    if [ -z "$pr_number" ]; then
+      continue
+    fi
+
     if [ "$pr_number" = "$PR_NUMBER" ]; then
       continue
     fi
-    
-    # Check if PR has preserve-theme label
-    pr_labels=$(echo "$pr_json" | jq -r '.labels[].name' 2>/dev/null)
-    if echo "$pr_labels" | grep -q "preserve-theme"; then
+
+    if printf '%s' "$pr_json" | jq -e '(.labels // []) | map(.name) | any(. == "preserve-theme")' >/dev/null 2>&1; then
       echo "  Skipping PR #${pr_number} (has preserve-theme label)"
       continue
     fi
-    
-    # Get comments for this PR
+
+    local pr_comments
     pr_comments=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments")
-    
-    # Look for theme ID in comments
-    theme_id=""
-    theme_name=""
-    while IFS= read -r line; do
-      if echo "$line" | grep -F "<!-- THEME_NAME:" | grep -q ":END -->"; then
-        # Extract theme ID
-        theme_data=$(echo "$line" | grep -o "<!-- THEME_NAME:.*:ID:[0-9]*:END -->" 2>/dev/null || echo "")
-        if [ -n "$theme_data" ]; then
-          theme_id=$(echo "$theme_data" | sed 's/.*:ID:\([0-9]*\):END.*/\1/')
-          theme_name=$(echo "$theme_data" | sed 's/<!-- THEME_NAME:\(.*\):ID:.*:END -->/\1/')
-          if [ -n "$theme_id" ]; then
-            echo "  Found theme ${theme_id} in PR #${pr_number} (updated: ${pr_updated})"
-            # Return the values for processing
-            echo "FOUND_THEME:${pr_number}:${theme_id}:${theme_name}:${pr_updated}"
-            break 2  # Break both loops - we found our oldest theme
-          fi
-        fi
-      fi
-    done <<< "$pr_comments"
-  done | while IFS=: read -r marker pr_num theme_id theme_name pr_updated; do
-    if [ "$marker" = "FOUND_THEME" ]; then
-      echo "🗑️ Deleting oldest theme ${theme_id} from PR #${pr_num}"
-      
-      # Delete the theme
-      shopify theme delete -t "${theme_id}" --force 2>&1 | grep -v "Deleting theme" || true
-      
-      # Post comment on that PR
-      COMMENT_BODY=$(cat <<EOF
+
+    local marker theme_id theme_name
+    marker=$(printf '%s' "$pr_comments" | extract_latest_theme_marker)
+    if [ -n "$marker" ]; then
+      theme_name=${marker%|*}
+      theme_id=${marker##*|}
+    else
+      echo "  No theme marker found for PR #${pr_number}"
+      continue
+    fi
+
+    found_candidate=true
+    echo "  Evaluating theme ${theme_id} from PR #${pr_number} (updated: ${pr_updated})"
+
+    if delete_theme_by_id "$theme_id"; then
+      echo "🗑️ Deleted theme ${theme_id} from PR #${pr_number}"
+
+      local comment_body
+      comment_body=$(cat <<EOF
 ## ⚠️ Theme Auto-Removed Due to Store Limit
 
 Your preview theme was automatically deleted to make room for newer PRs (Shopify limit: 20 themes).
@@ -312,16 +395,31 @@ Your preview theme was automatically deleted to make room for newer PRs (Shopify
 The theme will be automatically recreated.
 EOF
 )
-      
-      ESCAPED_BODY=$(echo "$COMMENT_BODY" | jq -Rs .)
-      github_api "/repos/${GITHUB_REPOSITORY}/issues/${pr_num}/comments" "POST" "{\"body\":${ESCAPED_BODY}}"
-      
-      echo "✅ Oldest theme deleted from PR #${pr_num}"
+
+      local escaped_body
+      escaped_body=$(echo "$comment_body" | jq -Rs .)
+      github_api "/repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments" "POST" "{\"body\":${escaped_body}}" >/dev/null
+
+      echo "✅ Oldest theme deleted from PR #${pr_number}"
       return 0
+    else
+      local delete_status=$?
+      if [ $delete_status -eq 2 ]; then
+        echo "  Theme ${theme_id} referenced by PR #${pr_number} no longer exists on the store"
+      else
+        echo "  Failed to delete theme ${theme_id} from PR #${pr_number}"
+        echo "$LAST_DELETE_OUTPUT"
+      fi
+      # Try next candidate
     fi
-  done
-  
-  echo "⚠️ No deletable themes found (all may have preserve-theme label)"
+  done < <(printf '%s' "$open_prs" | jq -c '.[]?')
+
+  if [ "$found_candidate" = false ]; then
+    echo "⚠️ No deletable themes found (all may have preserve-theme label or no markers)"
+  else
+    echo "⚠️ No deletable themes could be removed successfully"
+  fi
+
   return 1
 }
 
@@ -491,6 +589,19 @@ create_theme_with_retry() {
     STORE_URL="${STORE_URL%/}"
     PREVIEW_URL="https://${STORE_URL}?preview_theme_id=${CREATED_THEME_ID}"
     send_slack_notification "warning" "Theme created with errors: ${THEME_ERRORS}" "${PREVIEW_URL}" "${CREATED_THEME_ID}"
+
+    if [ -n "${CREATED_THEME_ID}" ]; then
+      echo "🧹 Cleaning up failed theme ${CREATED_THEME_ID}"
+      if delete_theme_by_id "${CREATED_THEME_ID}"; then
+        echo "✅ Failed theme ${CREATED_THEME_ID} removed"
+      else
+        delete_status=$?
+        if [ $delete_status -ne 2 ]; then
+          echo "$LAST_DELETE_OUTPUT"
+        fi
+        echo "⚠️ Could not remove failed theme ${CREATED_THEME_ID}"
+      fi
+    fi
   fi
   
   return 1
@@ -515,29 +626,22 @@ THEME_NAME=$(printf '%s' "$PR_TITLE" | \
 
 echo "📝 Theme name: ${THEME_NAME}"
 
-# Escape special regex characters in theme name for grep patterns
-THEME_NAME_ESCAPED=$(printf '%s' "$THEME_NAME" | sed 's/[][\.^$()|*+?{}]/\\&/g')
-
-# Find existing theme ID from PR comments
+# Find existing theme information from PR comments
 echo "🔍 Checking for existing theme..."
 COMMENTS=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments")
 
-# Parse comments for theme ID using the theme name
-while IFS= read -r line; do
-  # Check if line contains our theme marker using fixed string matching
-  if echo "$line" | grep -F "<!-- THEME_NAME:${THEME_NAME}:ID:" | grep -q ":END -->"; then
-    # Extract the full theme data using escaped theme name for regex
-    THEME_DATA=$(echo "$line" | grep -o "<!-- THEME_NAME:${THEME_NAME_ESCAPED}:ID:[0-9]*:END -->" 2>/dev/null || echo "")
-    if [ -n "$THEME_DATA" ]; then
-      # Extract just the ID number
-      EXISTING_THEME_ID=$(echo "$THEME_DATA" | sed 's/.*:ID:\([0-9]*\):END.*/\1/')
-      break
-    fi
-  fi
-done <<< "$COMMENTS"
+THEME_MARKER=$(printf '%s' "$COMMENTS" | extract_latest_theme_marker)
+
+if [ -n "$THEME_MARKER" ]; then
+  EXISTING_THEME_NAME=${THEME_MARKER%|*}
+  EXISTING_THEME_ID=${THEME_MARKER##*|}
+fi
 
 if [ -n "$EXISTING_THEME_ID" ]; then
   echo "✅ Found existing theme ID: ${EXISTING_THEME_ID}"
+  if [ -n "$EXISTING_THEME_NAME" ] && [ "$EXISTING_THEME_NAME" != "$THEME_NAME" ]; then
+    echo "ℹ️ Existing theme name on store: ${EXISTING_THEME_NAME}"
+  fi
 else
   echo "📝 No existing theme found, will create new one"
 fi
