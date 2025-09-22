@@ -991,7 +991,20 @@ check_theme_exists_by_name() {
   
   # Look for exact theme name match
   local found_theme_id
-  found_theme_id=$(echo "$theme_list" | node -e "const fs=require('fs'); const data=fs.readFileSync(0,'utf8'); const name='$theme_name'; try{const obj=JSON.parse(data); const themes=obj.themes||obj||[]; const found=Array.isArray(themes)?themes.find(t=>t.name===name):null; console.log(found?.id||'');}catch(e){}" | head -1)
+  found_theme_id=$(echo "$theme_list" | node -e "
+    const fs = require('fs');
+    const data = fs.readFileSync(0, 'utf8');
+    const name = process.argv[1];
+    try {
+      const obj = JSON.parse(data);
+      const themes = obj.themes || obj || [];
+      const found = Array.isArray(themes) ? themes.find(t => t.name === name) : null;
+      console.log(found?.id || '');
+    } catch(e) {
+      console.error('Error parsing theme list:', e.message);
+      console.log('');
+    }
+  " -- "$theme_name" 2>/dev/null | head -1)
   
   if [ -n "$found_theme_id" ] && [ "$found_theme_id" != "null" ]; then
     echo "✅ Found existing theme with name '${theme_name}' (ID: ${found_theme_id})"
