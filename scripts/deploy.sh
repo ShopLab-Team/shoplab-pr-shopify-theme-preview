@@ -228,12 +228,7 @@ ${CLEANED_ERRORS}
       echo "⚠️ Failed to post success comment"
     fi
     
-    # Send Slack notification
-    if [ -n "$THEME_ERRORS" ]; then
-      send_slack_notification "warning" "Theme updated with warnings:\n${CLEANED_ERRORS}" "$PREVIEW_URL" "$EXISTING_THEME_ID"
-    else
-      send_slack_notification "success" "Theme updated successfully!" "$PREVIEW_URL" "$EXISTING_THEME_ID"
-    fi
+    # No Slack notification for theme updates
     
     # Set outputs for GitHub Action
     echo "theme-id=${EXISTING_THEME_ID}" >> "$GITHUB_OUTPUT"
@@ -251,8 +246,7 @@ ${CLEANED_ERRORS}
       echo "❌ Failed to update existing theme"
       post_error_comment "$THEME_ERRORS" "$EXISTING_THEME_ID"
       
-      cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
-      send_slack_notification "error" "Failed to update existing theme:\n${cleaned_errors}" "" "$EXISTING_THEME_ID"
+      # No Slack notification for theme update failures
       exit 1
     fi
   fi
