@@ -32,9 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Critical Fix**: Theme cleanup on retry - when theme creation fails with Liquid errors, the failed theme is now properly deleted before retrying, preventing multiple duplicate themes from being created
+- **Critical Fix**: Liquid validation errors no longer trigger retries - the script now detects validation errors (e.g., "can't be greater than", "must be") and stops immediately instead of retrying 3 times
+- **Critical Fix**: Themes created with errors are now immediately cleaned up to prevent orphaned themes accumulating in the store
 - Failed themes are now always cleaned up after max retries to prevent orphaned themes
 - Clear error messaging when cleanup fails to prevent confusion
 - **Slack Formatting**: Fixed broken formatting in Slack notifications - removed box drawing characters that don't render properly in Slack
+- **Slack Formatting**: Error messages in both Slack and PR comments are now cleaned and formatted properly
 - Error messages are now formatted with bullet points for better readability in Slack
 
 ## [Unreleased]

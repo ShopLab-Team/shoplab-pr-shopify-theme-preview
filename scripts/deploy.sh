@@ -323,6 +323,10 @@ post_error_comment() {
   
   echo "💬 Posting error comment to PR..."
   
+  # Clean error message for better readability  
+  local cleaned_error
+  cleaned_error=$(clean_for_slack "$error_message")
+  
   local comment_body=""
   
   if [ -n "$theme_id" ]; then
@@ -339,7 +343,7 @@ post_error_comment() {
 The theme was created but encountered some issues:
 
 \`\`\`
-${error_message}
+${cleaned_error}
 \`\`\`
 
 **Preview URL (may have issues):** ${PREVIEW_URL}  
@@ -358,7 +362,7 @@ EOF
 Failed to create the preview theme due to the following error:
 
 \`\`\`
-${error_message}
+${cleaned_error}
 \`\`\`
 
 Please fix the errors and push a new commit to retry.
@@ -612,36 +616,61 @@ create_theme_with_retry() {
           THEME_ERRORS=$(echo "$parsed_json" | jq -r '(.theme.errors // {}) | to_entries | map("• " + .key + ": " + (.value | join(", "))) | join("\n")')
           [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$OUTPUT"
 
-          # Attempt to cleanup the failed theme
+          # Check if these are Liquid validation errors (not transient/network errors)
+          # Validation errors contain patterns like "can't be", "must be", "is invalid", etc.
+          local is_validation_error=false
+          if echo "$THEME_ERRORS" | grep -qE "(can't be|must be|is invalid|is required|not allowed|cannot be|exceeds|too |not valid)"; then
+            is_validation_error=true
+            echo "❌ Liquid validation errors detected - these cannot be fixed by retrying"
+          fi
+
+          # Cleanup the failed theme
           if [ -n "$CREATED_THEME_ID" ]; then
+            echo "🧹 Cleaning up theme ${CREATED_THEME_ID} that was created with errors..."
             if cleanup_failed_theme "$CREATED_THEME_ID"; then
-              echo "🔄 Failed theme cleaned up, will retry creating new theme"
-              # Clear the ID so next attempt creates a new theme
-              CREATED_THEME_ID=""
-              attempt=$((attempt + 1))
-              if [ $attempt -lt $max_retries ]; then
-                echo "⚠️ Theme creation failed with errors, retrying in 3 seconds..."
+              echo "✅ Failed theme ${CREATED_THEME_ID} has been removed"
+              
+              # Only retry if NOT validation errors and we have retries left
+              if [ "$is_validation_error" = false ] && [ $attempt -lt $((max_retries - 1)) ]; then
+                echo "🔄 This appears to be a transient error, will retry creating new theme"
+                CREATED_THEME_ID=""
+                attempt=$((attempt + 1))
+                echo "⚠️ Retrying in 3 seconds..."
                 sleep 3
                 continue
               fi
+              
+              # Don't include theme ID in error since we cleaned it up
+              post_error_comment "$THEME_ERRORS" ""
+              local cleaned_errors
+              cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
+              send_slack_notification "error" "Theme creation failed with validation errors:\n${cleaned_errors}\n\nThe theme has been cleaned up." "" ""
             else
-              echo "⚠️ Could not cleanup failed theme, aborting to prevent duplicate themes"
+              echo "⚠️ Could not cleanup failed theme ${CREATED_THEME_ID}"
+              # Include theme ID since it still exists
+              post_error_comment "$THEME_ERRORS" "$CREATED_THEME_ID"
+              
+              local preview_url=""
+              if [ -n "$CREATED_THEME_ID" ]; then
+                local store_url="${SHOPIFY_FLAG_STORE}"
+                store_url="${store_url#https://}"
+                store_url="${store_url#http://}"
+                store_url="${store_url%/}"
+                preview_url="https://${store_url}?preview_theme_id=${CREATED_THEME_ID}"
+              fi
+              
+              local cleaned_errors
+              cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
+              send_slack_notification "error" "Theme creation failed with validation errors:\n${cleaned_errors}\n\nFailed theme could not be cleaned up." "$preview_url" "$CREATED_THEME_ID"
             fi
+          else
+            # No theme was created, just post error
+            post_error_comment "$THEME_ERRORS" ""
+            local cleaned_errors
+            cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
+            send_slack_notification "error" "Theme creation failed:\n${cleaned_errors}" "" ""
           fi
-
-          # If we get here, either cleanup failed or we've exhausted retries
-          post_error_comment "$THEME_ERRORS" "$CREATED_THEME_ID"
-
-          local preview_url=""
-          if [ -n "$CREATED_THEME_ID" ]; then
-            local store_url="${SHOPIFY_FLAG_STORE}"
-            store_url="${store_url#https://}"
-            store_url="${store_url#http://}"
-            store_url="${store_url%/}"
-            preview_url="https://${store_url}?preview_theme_id=${CREATED_THEME_ID}"
-          fi
-
-          send_slack_notification "error" "Theme creation failed with validation errors:\n${THEME_ERRORS}" "$preview_url" "$CREATED_THEME_ID"
+          
           return 1
         fi
 
@@ -809,7 +838,9 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
     STORE_URL="${STORE_URL%/}"
     PREVIEW_URL="https://${STORE_URL}?preview_theme_id=${EXISTING_THEME_ID}"
     
-    send_slack_notification "error" "Theme update failed with validation errors:\n${THEME_ERRORS}" "${PREVIEW_URL}" "${EXISTING_THEME_ID}"
+    local cleaned_errors
+    cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
+    send_slack_notification "error" "Theme update failed with validation errors:\n${cleaned_errors}" "${PREVIEW_URL}" "${EXISTING_THEME_ID}"
     exit 1
   fi
   
