@@ -28,6 +28,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Protected against malicious inputs
 - Support for fork protection in workflows
 
+## [1.0.4] - 2025-09-22
+
+### Fixed
+- **Critical**: Added theme existence verification before attempting updates
+- **Critical**: Handle case where theme is manually deleted from store
+- **Fixed**: Properly handle `rebuild-theme` label to pull fresh settings
+- **Fixed**: Add detailed error logging for theme update failures
+- **Fixed**: Create new theme when referenced theme no longer exists
+
+### Changed
+- Theme updates now verify the theme exists before attempting to update
+- When theme doesn't exist, automatically fall back to creating new one
+- `rebuild-theme` label now properly pulls fresh settings for existing themes
+- Added comprehensive error detection for missing themes (404 errors)
+
 ## [1.0.3] - 2025-09-22
 
 ### Fixed

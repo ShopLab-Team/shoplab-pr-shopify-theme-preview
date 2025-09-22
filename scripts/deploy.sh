@@ -787,6 +787,16 @@ if [ -n "$PR_LABELS" ]; then
   fi
 fi
 
+# Check if PR has rebuild-theme label
+HAS_REBUILD_LABEL="false"
+if [ -n "$PR_LABELS" ]; then
+  # Parse the JSON array of labels
+  if echo "$PR_LABELS" | grep -q '"rebuild-theme"'; then
+    HAS_REBUILD_LABEL="true"
+    echo "🔄 Found 'rebuild-theme' label - will pull fresh settings from source theme"
+  fi
+fi
+
 # Sanitize PR title for theme name
 THEME_NAME=$(printf '%s' "$PR_TITLE" | \
   tr -cd '[:alnum:][:space:]-_.[]' | \
@@ -827,23 +837,81 @@ fi
 # Deploy or update theme
 if [ -n "${EXISTING_THEME_ID}" ]; then
   echo "🔄 Updating existing theme ID: ${EXISTING_THEME_ID}"
-  echo "💾 Preserving theme settings (excluding JSON files from update)"
   
-  # Always exclude JSON files when updating existing themes to preserve settings
-  # The no-sync label only affects initial theme creation, not updates
-  # Note: We allow locale default files (like en.default.json) to be updated
-  UPDATE_OUTPUT=$(shopify theme push \
-    --theme "${EXISTING_THEME_ID}" \
-    --nodelete \
-    --no-color \
-    --ignore "templates/*.json" \
-    --ignore "sections/*.json" \
-    --ignore "config/settings_data.json" \
-    --ignore "snippets/*.json" \
-    --json 2>&1)
+  # First verify the theme actually exists
+  echo "🔍 Verifying theme ${EXISTING_THEME_ID} exists on the store..."
+  THEME_LIST=$(shopify theme list --json 2>&1 || echo "{}")
+  THEME_EXISTS=$(echo "$THEME_LIST" | jq -r --arg id "$EXISTING_THEME_ID" '.themes[]? | select(.id == ($id | tonumber)) | .id' 2>/dev/null || echo "")
+  
+  if [ -z "$THEME_EXISTS" ]; then
+    echo "⚠️ Theme ${EXISTING_THEME_ID} no longer exists on the store!"
+    echo "📝 Will create a new theme instead..."
+    EXISTING_THEME_ID=""
+  fi
+fi
+
+if [ -n "${EXISTING_THEME_ID}" ]; then
+  echo "✅ Theme ${EXISTING_THEME_ID} verified to exist"
+  
+  # Check if rebuild-theme label is present - if so, pull settings first
+  if [ "$HAS_REBUILD_LABEL" = "true" ]; then
+    echo "🔄 'rebuild-theme' label detected - pulling fresh settings from source theme"
+    if [ -n "${SOURCE_THEME_ID}" ]; then
+      echo "📥 Pulling settings from theme ID: ${SOURCE_THEME_ID}"
+      THEME_SELECTOR="--theme ${SOURCE_THEME_ID}"
+    else
+      echo "📥 No source theme specified, pulling from live theme"
+      THEME_SELECTOR="--live"
+    fi
+    
+    echo "⬇️ Pulling JSON configuration files..."
+    shopify theme pull \
+      ${THEME_SELECTOR} \
+      --only "templates/*.json" \
+      --only "sections/*.json" \
+      --only "config/settings_data.json" \
+      --only "locales/*.json" \
+      --only "snippets/*.json" \
+      --nodelete \
+      --no-color 2>&1 | while IFS= read -r line; do
+        # Filter out noisy output
+        if [[ ! "$line" =~ "Pulling theme files from" ]] && \
+           [[ ! "$line" =~ "Theme pulled successfully" ]]; then
+          echo "$line"
+        fi
+      done || echo "⚠️ Warning: Could not pull all settings files (this is okay if some don't exist)"
+    
+    echo "📤 Pushing updated theme with fresh settings..."
+    # When rebuild-theme label is present, push ALL files including JSON
+    UPDATE_OUTPUT=$(shopify theme push \
+      --theme "${EXISTING_THEME_ID}" \
+      --nodelete \
+      --no-color \
+      --json 2>&1)
+  else
+    echo "💾 Preserving theme settings (excluding JSON files from update)"
+    # Normal update - preserve existing theme settings
+    UPDATE_OUTPUT=$(shopify theme push \
+      --theme "${EXISTING_THEME_ID}" \
+      --nodelete \
+      --no-color \
+      --ignore "templates/*.json" \
+      --ignore "sections/*.json" \
+      --ignore "config/settings_data.json" \
+      --ignore "snippets/*.json" \
+      --json 2>&1)
+  fi
   
   UPDATE_SUCCESS=$?
   LAST_UPLOAD_OUTPUT="$UPDATE_OUTPUT"
+  
+  # Log the output for debugging
+  echo "📝 Update command exit code: $UPDATE_SUCCESS"
+  if [ -n "$UPDATE_OUTPUT" ]; then
+    echo "📋 Update output preview (first 500 chars):"
+    echo "${UPDATE_OUTPUT:0:500}"
+  fi
+  
   local update_parsed_json
   # Extract JSON directly from the output
   update_parsed_json=$(printf '%s' "$UPDATE_OUTPUT" | grep -o '{"theme":{.*}}$' | tail -1 || echo "")
@@ -854,18 +922,26 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
   local update_warning_message=""
 
   if [ -n "$update_parsed_json" ]; then
-    update_error_count=$(echo "$update_parsed_json" | jq '(.theme.errors // {}) | length')
-    update_warning_message=$(echo "$update_parsed_json" | jq -r '.theme.warning // ""')
+    update_error_count=$(echo "$update_parsed_json" | jq '(.theme.errors // {}) | length' 2>/dev/null || echo "0")
+    update_warning_message=$(echo "$update_parsed_json" | jq -r '.theme.warning // ""' 2>/dev/null || echo "")
   fi
   
-  # Check for errors in update
-  if [ $UPDATE_SUCCESS -ne 0 ] || [ "$update_error_count" -gt 0 ]; then
+  # Check if the theme doesn't exist error
+  if [[ "$UPDATE_OUTPUT" == *"Theme #${EXISTING_THEME_ID} doesn't exist"* ]] || \
+     [[ "$UPDATE_OUTPUT" == *"doesn't exist"* ]] || \
+     [[ "$UPDATE_OUTPUT" == *"not found"* ]] || \
+     [[ "$UPDATE_OUTPUT" == *"404"* ]]; then
+    echo "❌ Theme ${EXISTING_THEME_ID} not found on the store!"
+    echo "📝 Creating a new theme instead..."
+    EXISTING_THEME_ID=""
+  elif [ $UPDATE_SUCCESS -ne 0 ] || [ "$update_error_count" -gt 0 ]; then
     echo "⚠️ Theme update encountered errors"
     if [ -n "$update_parsed_json" ]; then
       THEME_ERRORS=$(echo "$update_parsed_json" | jq -r '(.theme.errors // {}) | to_entries | map("• " + .key + ": " + (.value | join(", "))) | join("\n")')
     fi
     [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$UPDATE_OUTPUT"
 
+    echo "❌ Full error output:"
     echo "$UPDATE_OUTPUT"
 
     post_error_comment "${THEME_ERRORS}" "${EXISTING_THEME_ID}"
@@ -880,18 +956,21 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
     cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
     send_slack_notification "error" "Theme update failed with validation errors:\n${cleaned_errors}" "${PREVIEW_URL}" "${EXISTING_THEME_ID}"
     exit 1
-  fi
-  
-  if [ -n "$update_warning_message" ] && [ "$update_warning_message" != "null" ]; then
-    echo "⚠️ Theme updated with warnings"
-    THEME_ERRORS="$update_warning_message"
-    export THEME_ERRORS
-  fi
+  else
+    # Update succeeded
+    if [ -n "$update_warning_message" ] && [ "$update_warning_message" != "null" ]; then
+      echo "⚠️ Theme updated with warnings"
+      THEME_ERRORS="$update_warning_message"
+      export THEME_ERRORS
+    fi
 
-  THEME_ID="${EXISTING_THEME_ID}"
-  echo "✅ Theme updated successfully"
-  
-else
+    THEME_ID="${EXISTING_THEME_ID}"
+    echo "✅ Theme updated successfully"
+  fi
+fi
+
+# If theme doesn't exist or update failed due to non-existence, create new theme
+if [ -z "${EXISTING_THEME_ID}" ]; then
   # Pull settings from source theme (only on initial creation and if no-sync label is not present)
   if [ "$HAS_NO_SYNC_LABEL" = "true" ]; then
     echo "⏭️ Skipping theme settings pull due to 'no-sync' label"
