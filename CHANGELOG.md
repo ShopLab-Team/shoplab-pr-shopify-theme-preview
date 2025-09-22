@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Protected against malicious inputs
 - Support for fork protection in workflows
 
+## [1.0.2] - 2025-09-22
+
+### Fixed
+- **CRITICAL FIX**: Properly parse Shopify CLI JSON output when using --json flag
+- **CRITICAL FIX**: JSON extraction now works even when mixed with box-drawing error output
+- **CRITICAL FIX**: ALL validation errors now stop execution immediately - no retries ever
+- **CRITICAL FIX**: Themes created with errors are immediately deleted, preventing accumulation
+- Added comprehensive logging to track theme creation flow
+- Handle edge cases where JSON extraction might fail
+- Improved error detection and reporting
+
 ## [1.0.1] - 2025-09-22
 
 ### Fixed
