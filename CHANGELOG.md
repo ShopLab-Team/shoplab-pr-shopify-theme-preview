@@ -28,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Protected against malicious inputs
 - Support for fork protection in workflows
 
+## [1.0.1] - 2025-09-22
+
+### Fixed
+- **Critical Fix**: Theme cleanup on retry - when theme creation fails with Liquid errors, the failed theme is now properly deleted before retrying, preventing multiple duplicate themes from being created
+- Failed themes are now always cleaned up after max retries to prevent orphaned themes
+- Clear error messaging when cleanup fails to prevent confusion
+- **Slack Formatting**: Fixed broken formatting in Slack notifications - removed box drawing characters that don't render properly in Slack
+- Error messages are now formatted with bullet points for better readability in Slack
+
 ## [Unreleased]
 
 ### Added

@@ -47,6 +47,30 @@ truncate_for_slack() {
   printf '%s' "$truncated"
 }
 
+clean_for_slack() {
+  local input="$1"
+  # Remove box drawing characters and ANSI escape codes
+  # Extract meaningful content from Shopify CLI output
+  local cleaned
+  cleaned=$(printf '%s' "$input" | \
+    awk '{
+      # Remove box drawing characters
+      gsub(/[╭╮╰╯─│║┃┊┋╎╏]/, " ");
+      # Remove ANSI escape codes
+      gsub(/\x1b\[[0-9;]*[mGKH]/, "");
+      # Trim leading and trailing whitespace
+      gsub(/^[ \t]+|[ \t]+$/, "");
+      # Collapse multiple spaces
+      gsub(/  +/, " ");
+      # Replace standalone "error" with "Error:"
+      if ($0 == "error") $0 = "Error:";
+      # Print non-empty lines
+      if (length($0) > 0) print $0
+    }')
+  
+  printf '%s' "$cleaned"
+}
+
 extract_theme_cli_json() {
   node - <<'NODE'
 const fs = require('fs');
@@ -246,8 +270,12 @@ send_slack_notification() {
       ;;
   esac
 
+  # Clean up message for Slack (remove box drawing chars, etc)
+  local cleaned_message
+  cleaned_message=$(clean_for_slack "$message")
+  
   local truncated_message
-  truncated_message=$(truncate_for_slack "$message" 700)
+  truncated_message=$(truncate_for_slack "$cleaned_message" 700)
 
   local pr_value="<${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}|#${PR_NUMBER}: ${PR_TITLE}>"
   local timestamp=$(date +%s)
@@ -493,7 +521,7 @@ retry_theme_upload() {
           return 0
         fi
 
-        THEME_ERRORS=$(echo "$parsed_json" | jq -r '(.theme.errors // {}) | to_entries | map(.key + ": " + (.value | join(", "))) | join("\n")')
+        THEME_ERRORS=$(echo "$parsed_json" | jq -r '(.theme.errors // {}) | to_entries | map("• " + .key + ": " + (.value | join(", "))) | join("\n")')
         [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$OUTPUT"
         retry_count=$max_retries
         break
@@ -581,10 +609,27 @@ create_theme_with_retry() {
         warning_message=$(echo "$parsed_json" | jq -r '.theme.warning // ""')
 
         if [ "$error_count" -gt 0 ]; then
-          THEME_ERRORS=$(echo "$parsed_json" | jq -r '(.theme.errors // {}) | to_entries | map(.key + ": " + (.value | join(", "))) | join("\n")')
+          THEME_ERRORS=$(echo "$parsed_json" | jq -r '(.theme.errors // {}) | to_entries | map("• " + .key + ": " + (.value | join(", "))) | join("\n")')
           [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$OUTPUT"
 
-          cleanup_failed_theme "$CREATED_THEME_ID"
+          # Attempt to cleanup the failed theme
+          if [ -n "$CREATED_THEME_ID" ]; then
+            if cleanup_failed_theme "$CREATED_THEME_ID"; then
+              echo "🔄 Failed theme cleaned up, will retry creating new theme"
+              # Clear the ID so next attempt creates a new theme
+              CREATED_THEME_ID=""
+              attempt=$((attempt + 1))
+              if [ $attempt -lt $max_retries ]; then
+                echo "⚠️ Theme creation failed with errors, retrying in 3 seconds..."
+                sleep 3
+                continue
+              fi
+            else
+              echo "⚠️ Could not cleanup failed theme, aborting to prevent duplicate themes"
+            fi
+          fi
+
+          # If we get here, either cleanup failed or we've exhausted retries
           post_error_comment "$THEME_ERRORS" "$CREATED_THEME_ID"
 
           local preview_url=""
@@ -596,7 +641,7 @@ create_theme_with_retry() {
             preview_url="https://${store_url}?preview_theme_id=${CREATED_THEME_ID}"
           fi
 
-          send_slack_notification "error" "Theme push errors:\n${THEME_ERRORS}" "$preview_url" "$CREATED_THEME_ID"
+          send_slack_notification "error" "Theme creation failed with validation errors:\n${THEME_ERRORS}" "$preview_url" "$CREATED_THEME_ID"
           return 1
         fi
 
@@ -634,20 +679,31 @@ create_theme_with_retry() {
   echo "❌ Failed to create/upload theme after ${max_retries} attempts"
   echo "Last output: $LAST_UPLOAD_OUTPUT"
 
+  # Always try to cleanup any partially created theme
   if [ -n "$CREATED_THEME_ID" ]; then
-    cleanup_failed_theme "$CREATED_THEME_ID"
+    echo "🧹 Attempting to cleanup failed theme ${CREATED_THEME_ID}..."
+    if cleanup_failed_theme "$CREATED_THEME_ID"; then
+      echo "✅ Cleanup successful"
+      # Don't include theme ID in error message since it's been deleted
+      local final_message="$THEME_ERRORS"
+      [ -z "$final_message" ] && final_message="$LAST_UPLOAD_OUTPUT"
+      post_error_comment "$final_message" ""
+      send_slack_notification "error" "Theme creation failed after retries. Failed theme has been cleaned up." "" ""
+    else
+      echo "⚠️ Could not cleanup failed theme ${CREATED_THEME_ID}"
+      # Include theme ID in error since it still exists
+      local final_message="$THEME_ERRORS"
+      [ -z "$final_message" ] && final_message="$LAST_UPLOAD_OUTPUT"
+      post_error_comment "$final_message" "$CREATED_THEME_ID"
 
-    local final_message="$THEME_ERRORS"
-    [ -z "$final_message" ] && final_message="$LAST_UPLOAD_OUTPUT"
-    post_error_comment "$final_message" "$CREATED_THEME_ID"
+      local store_url="${SHOPIFY_FLAG_STORE}"
+      store_url="${store_url#https://}"
+      store_url="${store_url#http://}"
+      store_url="${store_url%/}"
+      local preview_url="https://${store_url}?preview_theme_id=${CREATED_THEME_ID}"
 
-    local store_url="${SHOPIFY_FLAG_STORE}"
-    store_url="${store_url#https://}"
-    store_url="${store_url#http://}"
-    store_url="${store_url%/}"
-    local preview_url="https://${store_url}?preview_theme_id=${CREATED_THEME_ID}"
-
-    send_slack_notification "error" "Theme upload failed after retries." "$preview_url" "$CREATED_THEME_ID"
+      send_slack_notification "error" "Theme upload failed after retries. Failed theme ${CREATED_THEME_ID} could not be cleaned up." "$preview_url" "$CREATED_THEME_ID"
+    fi
   else
     local fallback_message="$THEME_ERRORS"
     [ -z "$fallback_message" ] && fallback_message="$LAST_UPLOAD_OUTPUT"
@@ -739,7 +795,7 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
   if [ $UPDATE_SUCCESS -ne 0 ] || [ "$update_error_count" -gt 0 ]; then
     echo "⚠️ Theme update encountered errors"
     if [ -n "$update_parsed_json" ]; then
-      THEME_ERRORS=$(echo "$update_parsed_json" | jq -r '(.theme.errors // {}) | to_entries | map(.key + ": " + (.value | join(", "))) | join("\n")')
+      THEME_ERRORS=$(echo "$update_parsed_json" | jq -r '(.theme.errors // {}) | to_entries | map("• " + .key + ": " + (.value | join(", "))) | join("\n")')
     fi
     [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$UPDATE_OUTPUT"
 
@@ -753,7 +809,7 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
     STORE_URL="${STORE_URL%/}"
     PREVIEW_URL="https://${STORE_URL}?preview_theme_id=${EXISTING_THEME_ID}"
     
-    send_slack_notification "error" "Theme update failed: ${THEME_ERRORS}" "${PREVIEW_URL}" "${EXISTING_THEME_ID}"
+    send_slack_notification "error" "Theme update failed with validation errors:\n${THEME_ERRORS}" "${PREVIEW_URL}" "${EXISTING_THEME_ID}"
     exit 1
   fi
   
