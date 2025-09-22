@@ -71,35 +71,6 @@ clean_for_slack() {
   printf '%s' "$cleaned"
 }
 
-extract_theme_cli_json() {
-  node - <<'NODE'
-const fs = require('fs');
-const data = fs.readFileSync(0, 'utf8');
-if (!data.trim()) {
-  process.exit(1);
-}
-
-const lines = data.split(/\r?\n/);
-let buffer = '';
-for (let i = lines.length - 1; i >= 0; i -= 1) {
-  const line = lines[i];
-  buffer = buffer ? `${line}\n${buffer}` : line;
-  const trimmed = buffer.trim();
-  if (!trimmed.startsWith('{')) {
-    continue;
-  }
-  try {
-    const parsed = JSON.parse(trimmed);
-    process.stdout.write(JSON.stringify(parsed));
-    process.exit(0);
-  } catch (error) {
-    continue;
-  }
-}
-process.exit(1);
-NODE
-}
-
 # Helper function: extract the most recent theme marker from PR comments
 extract_latest_theme_marker() {
   local input_json
@@ -507,7 +478,11 @@ retry_theme_upload() {
     LAST_UPLOAD_OUTPUT="$OUTPUT"
 
     local parsed_json
-    parsed_json=$(printf '%s' "$OUTPUT" | extract_theme_cli_json 2>/dev/null || echo "")
+    # Extract JSON directly from the output
+    parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}$' | tail -1 || echo "")
+    if [ -z "$parsed_json" ]; then
+      parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}' | tail -1 || echo "")
+    fi
 
     if [ $status -eq 0 ]; then
       if [ -n "$parsed_json" ]; then
@@ -600,20 +575,13 @@ create_theme_with_retry() {
       # even when there are errors, it just mixes it with box-drawing output
       local parsed_json
       
-      # First try the extract_theme_cli_json function
-      parsed_json=$(printf '%s' "$OUTPUT" | extract_theme_cli_json 2>/dev/null || echo "")
+      # Extract JSON directly - the JSON is always at the end, after any error boxes
+      # Look for the complete JSON object that starts with {"theme":
+      parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}$' | tail -1 || echo "")
       
-      # If that fails, look for JSON directly - it's always there with --json flag
+      # If not found with $ anchor (sometimes there's trailing whitespace), try without it
       if [ -z "$parsed_json" ]; then
-        echo "⚠️ extract_theme_cli_json failed, extracting JSON directly..."
-        # The JSON is always at the end, after any error boxes
-        # Look for the complete JSON object that starts with {"theme":
-        parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}$' | tail -1 || echo "")
-        
-        # If still not found, try without the $ anchor
-        if [ -z "$parsed_json" ]; then
-          parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}' | tail -1 || echo "")
-        fi
+        parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}' | tail -1 || echo "")
       fi
       
       if [ -n "$parsed_json" ]; then
@@ -877,7 +845,11 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
   UPDATE_SUCCESS=$?
   LAST_UPLOAD_OUTPUT="$UPDATE_OUTPUT"
   local update_parsed_json
-  update_parsed_json=$(printf '%s' "$UPDATE_OUTPUT" | extract_theme_cli_json 2>/dev/null || echo "")
+  # Extract JSON directly from the output
+  update_parsed_json=$(printf '%s' "$UPDATE_OUTPUT" | grep -o '{"theme":{.*}}$' | tail -1 || echo "")
+  if [ -z "$update_parsed_json" ]; then
+    update_parsed_json=$(printf '%s' "$UPDATE_OUTPUT" | grep -o '{"theme":{.*}}' | tail -1 || echo "")
+  fi
   local update_error_count=0
   local update_warning_message=""
 

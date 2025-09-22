@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Protected against malicious inputs
 - Support for fork protection in workflows
 
+## [1.0.3] - 2025-09-22
+
+### Fixed
+- **Cleanup**: Removed non-working `extract_theme_cli_json` function, now using direct JSON extraction
+- **Fixed**: Slack notification newline formatting now works properly
+- **Simplified**: JSON extraction is now more reliable and straightforward
+
+### Changed
+- JSON extraction from Shopify CLI output is now done directly with grep
+- Removed unnecessary complexity in JSON parsing
+
 ## [1.0.2] - 2025-09-22
 
 ### Fixed
