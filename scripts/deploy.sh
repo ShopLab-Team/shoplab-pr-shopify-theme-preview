@@ -919,7 +919,7 @@ if [ -z "$PR_TITLE" ]; then
   THEME_NAME="PR-${PR_NUMBER}"
 else
   # First, try to extract any ticket/issue reference (like FLASH-123)
-  local ticket_ref=$(echo "$PR_TITLE" | grep -oE '\[?[A-Z]+-[0-9]+\]?' | head -1 | tr -d '[]')
+  ticket_ref=$(echo "$PR_TITLE" | grep -oE '\[?[A-Z]+-[0-9]+\]?' | head -1 | tr -d '[]')
   
   # Sanitize the title: keep alphanumeric, space, dash, underscore, dot, brackets
   THEME_NAME=$(printf '%s' "$PR_TITLE" | \
