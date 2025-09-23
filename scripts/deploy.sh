@@ -253,6 +253,26 @@ ${CLEANED_ERRORS}
 fi
 
 # Create new theme (only if no existing theme or update failed due to non-existence)
+echo "📥 Pulling JSON configuration from live theme before creating new theme..."
+
+# Determine which theme to pull settings from
+if [ -n "${SOURCE_THEME_ID}" ]; then
+  echo "📥 Pulling settings from theme ID: ${SOURCE_THEME_ID}"
+  THEME_SELECTOR="--theme ${SOURCE_THEME_ID}"
+else
+  echo "📥 No source theme specified, pulling from live theme"
+  THEME_SELECTOR="--live"
+fi
+
+echo "⬇️ Pulling JSON configuration files..."
+
+# Pull only JSON files to get current settings
+if ! shopify theme pull $THEME_SELECTOR --only="*.json" --no-color 2>&1; then
+  echo "⚠️ Warning: Could not pull settings from source theme"
+else
+  echo "✅ Settings pulled successfully"
+fi
+
 if create_theme_with_retry "${THEME_NAME}"; then
   echo "🎉 Theme created and deployed successfully!"
   
