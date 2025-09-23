@@ -4,6 +4,10 @@ set -e
 # Cleanup script for Shopify PR Theme Preview Action
 # This script deletes the theme when a PR is closed or merged
 
+# Source library functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/common.sh" && COMMON_UTILS_LOADED=1
+
 echo "🧹 Starting Shopify PR Theme cleanup..."
 
 # Check required environment variables
@@ -29,56 +33,6 @@ fi
 
 LAST_DELETE_OUTPUT=""
 LAST_FOUND_THEME_ID=""
-
-# Function to send Slack notification
-send_slack_notification() {
-  local status=$1
-  local message=$2
-  local theme_id=$3
-  
-  if [ -z "$SLACK_WEBHOOK_URL" ]; then
-    return 0
-  fi
-  
-  echo "📨 Sending Slack notification..."
-  
-  # Build the Slack message for cleanup
-  local slack_message=$(cat <<EOF
-{
-  "text": "🧹 Shopify Theme Cleanup",
-  "attachments": [
-    {
-      "color": "good",
-      "fields": [
-        {
-          "title": "Repository",
-          "value": "${GITHUB_REPOSITORY}",
-          "short": true
-        },
-        {
-          "title": "PR",
-          "value": "<${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}|#${PR_NUMBER}: ${PR_TITLE}>",
-          "short": true
-        },
-        {
-          "title": "Status",
-          "value": "${message}",
-          "short": false
-        }
-      ],
-      "footer": "Shopify Theme Preview",
-      "ts": $(date +%s)
-    }
-  ]
-}
-EOF
-)
-  
-  # Send to Slack
-  curl -X POST -H 'Content-type: application/json' \
-    --data "$slack_message" \
-    "$SLACK_WEBHOOK_URL" 2>/dev/null || echo "⚠️ Failed to send Slack notification"
-}
 
 # Function to make GitHub API calls
 github_api() {
@@ -295,10 +249,9 @@ fi
 # Final status
 if [ "$DELETED" = false ]; then
   echo "ℹ️ No theme was deleted (theme may have been manually deleted or never created)"
-  send_slack_notification "info" "No theme found to delete (may have been manually deleted or never created)" ""
 else
   IDENTIFIER="${DELETED_THEME_ID:-$DELETED_THEME_NAME}"
-  send_slack_notification "success" "Theme ${IDENTIFIER} deleted successfully" "${DELETED_THEME_ID:-}"
+  echo "✅ Theme ${IDENTIFIER} deleted successfully"
 fi
 
 echo "🎉 Cleanup complete!"
