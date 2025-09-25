@@ -323,7 +323,7 @@ create_theme_with_retry() {
 
         THEME_ERRORS="Theme limit reached and older previews could not be removed automatically."
         post_error_comment "$THEME_ERRORS" ""
-        send_slack_notification "error" "$THEME_ERRORS" "" ""
+        # Slack notification will be sent by deploy.sh
         return 1
       fi
 
@@ -374,9 +374,7 @@ create_theme_with_retry() {
           
           # Exit immediately - NO RETRIES for validation errors
           post_error_comment "$THEME_ERRORS" ""
-          local cleaned_errors
-          cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
-          send_slack_notification "error" "Theme creation failed with validation errors:\n${cleaned_errors}" "" ""
+          # Slack notification will be sent by deploy.sh with cleanup status
           
           echo "🛑 Stopping - validation errors cannot be fixed by retrying"
           return 1
