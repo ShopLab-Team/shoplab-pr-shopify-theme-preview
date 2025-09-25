@@ -181,13 +181,13 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
       THEME_SELECTOR="--live"
     fi
     
-    echo "⬇️ Pulling JSON configuration files..."
+    echo "⬇️ Pulling JSON configuration files (excluding settings_schema.json)..."
     
-    # Pull only JSON files to preserve settings
-    if ! shopify theme pull $THEME_SELECTOR --only="*.json" --no-color 2>&1; then
+    # Pull only JSON files to preserve settings, but exclude settings_schema.json which must come from codebase
+    if ! shopify theme pull $THEME_SELECTOR --only="*.json" --ignore="config/settings_schema.json" --no-color 2>&1; then
       echo "⚠️ Warning: Could not pull settings from source theme"
     else
-      echo "✅ Settings pulled successfully"
+      echo "✅ Settings pulled successfully (settings_schema.json preserved from codebase)"
     fi
   else
     echo "💾 Preserving existing theme settings (no rebuild-theme label)"
@@ -275,13 +275,13 @@ if [ "$HAS_NO_SYNC_LABEL" = "false" ]; then
     THEME_SELECTOR="--live"
   fi
 
-  echo "⬇️ Pulling JSON configuration files..."
+  echo "⬇️ Pulling JSON configuration files (excluding settings_schema.json)..."
 
-  # Pull only JSON files to get current settings
-  if ! shopify theme pull $THEME_SELECTOR --only="*.json" --no-color 2>&1; then
+  # Pull only JSON files to get current settings, but exclude settings_schema.json which must come from codebase
+  if ! shopify theme pull $THEME_SELECTOR --only="*.json" --ignore="config/settings_schema.json" --no-color 2>&1; then
     echo "⚠️ Warning: Could not pull settings from source theme"
   else
-    echo "✅ Settings pulled successfully"
+    echo "✅ Settings pulled successfully (settings_schema.json preserved from codebase)"
   fi
 else
   echo "⏭️ Skipping JSON configuration pull due to 'no-sync' label"
