@@ -53,6 +53,15 @@ if [ -n "$PR_LABELS" ]; then
   fi
 fi
 
+# Check for no-sync label
+HAS_NO_SYNC_LABEL="false"
+if [ -n "$PR_LABELS" ]; then
+  if echo "$PR_LABELS" | grep -q "no-sync"; then
+    HAS_NO_SYNC_LABEL="true"
+    echo "⏭️ Found 'no-sync' label - will skip pulling settings from source theme"
+  fi
+fi
+
 # Sanitize PR title for theme name - handle edge cases
 if [ -z "$PR_TITLE" ]; then
   THEME_NAME="PR-${PR_NUMBER}"
@@ -253,24 +262,29 @@ ${CLEANED_ERRORS}
 fi
 
 # Create new theme (only if no existing theme or update failed due to non-existence)
-echo "📥 Pulling JSON configuration from live theme before creating new theme..."
+# Only pull JSON configuration if no-sync label is NOT present
+if [ "$HAS_NO_SYNC_LABEL" = "false" ]; then
+  echo "📥 Pulling JSON configuration from live theme before creating new theme..."
 
-# Determine which theme to pull settings from
-if [ -n "${SOURCE_THEME_ID}" ]; then
-  echo "📥 Pulling settings from theme ID: ${SOURCE_THEME_ID}"
-  THEME_SELECTOR="--theme ${SOURCE_THEME_ID}"
+  # Determine which theme to pull settings from
+  if [ -n "${SOURCE_THEME_ID}" ]; then
+    echo "📥 Pulling settings from theme ID: ${SOURCE_THEME_ID}"
+    THEME_SELECTOR="--theme ${SOURCE_THEME_ID}"
+  else
+    echo "📥 No source theme specified, pulling from live theme"
+    THEME_SELECTOR="--live"
+  fi
+
+  echo "⬇️ Pulling JSON configuration files..."
+
+  # Pull only JSON files to get current settings
+  if ! shopify theme pull $THEME_SELECTOR --only="*.json" --no-color 2>&1; then
+    echo "⚠️ Warning: Could not pull settings from source theme"
+  else
+    echo "✅ Settings pulled successfully"
+  fi
 else
-  echo "📥 No source theme specified, pulling from live theme"
-  THEME_SELECTOR="--live"
-fi
-
-echo "⬇️ Pulling JSON configuration files..."
-
-# Pull only JSON files to get current settings
-if ! shopify theme pull $THEME_SELECTOR --only="*.json" --no-color 2>&1; then
-  echo "⚠️ Warning: Could not pull settings from source theme"
-else
-  echo "✅ Settings pulled successfully"
+  echo "⏭️ Skipping JSON configuration pull due to 'no-sync' label"
 fi
 
 if create_theme_with_retry "${THEME_NAME}"; then
