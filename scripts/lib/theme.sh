@@ -219,6 +219,7 @@ EOF
 # Function to upload theme to Shopify
 upload_theme() {
   local theme_id=$1
+  local include_json=${2:-true}  # Default to true for backward compatibility
   local status=0
   local parsed_json
   local error_count
@@ -227,16 +228,29 @@ upload_theme() {
   THEME_ERRORS=""
   LAST_UPLOAD_OUTPUT=""
   
-  echo "📤 Uploading theme to ID: ${theme_id}..."
-  
-  set +e
-  OUTPUT=$(shopify theme push \
-    --theme "$theme_id" \
-    --nodelete \
-    --no-color \
-    --json 2>&1)
-  status=$?
-  set -e
+  # If we should not include JSON, add ignore flags
+  if [ "$include_json" = "false" ]; then
+    echo "📤 Uploading theme to ID: ${theme_id} (excluding JSON files)..."
+    set +e
+    OUTPUT=$(shopify theme push \
+      --theme "$theme_id" \
+      --nodelete \
+      --no-color \
+      --json \
+      --ignore="*.json" 2>&1)
+    status=$?
+    set -e
+  else
+    echo "📤 Uploading theme to ID: ${theme_id}..."
+    set +e
+    OUTPUT=$(shopify theme push \
+      --theme "$theme_id" \
+      --nodelete \
+      --no-color \
+      --json 2>&1)
+    status=$?
+    set -e
+  fi
   
   LAST_UPLOAD_OUTPUT="$OUTPUT"
   

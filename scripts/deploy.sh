@@ -197,7 +197,14 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
   THEME_ID="${EXISTING_THEME_ID}"
   export THEME_ID
   
-  if upload_theme "${EXISTING_THEME_ID}"; then
+  # Determine if we should include JSON files in the upload
+  # Include JSON only if rebuild-theme label is present
+  include_json_flag="false"
+  if [ "$HAS_REBUILD_LABEL" = "true" ]; then
+    include_json_flag="true"
+  fi
+  
+  if upload_theme "${EXISTING_THEME_ID}" "$include_json_flag"; then
     echo "✅ Theme ${EXISTING_THEME_ID} updated successfully!"
     
     # Get preview URL for existing theme
