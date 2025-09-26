@@ -228,16 +228,20 @@ upload_theme() {
   THEME_ERRORS=""
   LAST_UPLOAD_OUTPUT=""
   
-  # If we should not include JSON, add ignore flags
+  # If we should not include JSON, add ignore flags for specific JSON files
+  # Always allow locales/en.default.json and config/settings_schema.json
   if [ "$include_json" = "false" ]; then
-    echo "📤 Uploading theme to ID: ${theme_id} (excluding JSON files)..."
+    echo "📤 Uploading theme to ID: ${theme_id} (preserving settings, allowing locale & schema updates)..."
     set +e
     OUTPUT=$(shopify theme push \
       --theme "$theme_id" \
       --nodelete \
       --no-color \
       --json \
-      --ignore="*.json" 2>&1)
+      --ignore="config/settings_data.json" \
+      --ignore="templates/*.json" \
+      --ignore="sections/*.json" \
+      --ignore="layout/*.json" 2>&1)
     status=$?
     set -e
   else
