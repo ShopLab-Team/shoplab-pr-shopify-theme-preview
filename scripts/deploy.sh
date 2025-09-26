@@ -110,11 +110,15 @@ wait $COMMENTS_PID $THEME_LIST_PID 2>/dev/null || true
 # Extract theme ID from comments if exists
 if [ -n "$COMMENTS" ]; then
   EXISTING_THEME_ID=$(echo "$COMMENTS" | extract_latest_theme_marker)
+  if [ -n "$EXISTING_THEME_ID" ]; then
+    echo "📋 Found theme ID ${EXISTING_THEME_ID} in PR comments"
+  else
+    echo "📝 No theme ID found in PR comments"
+  fi
 fi
 
 # If we found a theme ID in comments, verify it still exists
 if [ -n "$EXISTING_THEME_ID" ]; then
-  echo "📋 Found theme ID ${EXISTING_THEME_ID} in PR comments"
   
   # Check if this theme actually exists in the Shopify store
   THEME_EXISTS=""

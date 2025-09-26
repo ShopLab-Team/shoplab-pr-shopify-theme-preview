@@ -95,55 +95,51 @@ extract_latest_theme_marker() {
   local input_json
   input_json=$(cat)
   
-  echo "$input_json" | node -e "
+  # Use a simpler approach without complex pipes
+  local result
+  result=$(echo "$input_json" | node -e "
     const data = require('fs').readFileSync(0, 'utf8');
     try {
       const comments = JSON.parse(data);
+      if (!Array.isArray(comments) || comments.length === 0) {
+        console.log('');
+        process.exit(0);
+      }
+      
       const markers = [];
       
+      // Look for theme ID markers in each comment
       comments.forEach(comment => {
-        const matches = comment.body.match(/<!-- SHOPIFY_THEME_ID: (\\d+) -->/g);
-        if (matches) {
-          matches.forEach(match => {
-            const id = match.match(/\\d+/)[0];
-            markers.push({
-              id: id,
-              created_at: comment.created_at
-            });
+        if (!comment.body) return;
+        
+        // Look for the theme ID marker pattern
+        const regex = /<!-- SHOPIFY_THEME_ID: (\\d+) -->/g;
+        let match;
+        while ((match = regex.exec(comment.body)) !== null) {
+          markers.push({
+            id: match[1],
+            created_at: comment.created_at
           });
         }
       });
       
       if (markers.length === 0) {
         console.log('');
-        return;
+        process.exit(0);
       }
       
       // Sort by creation date (most recent first)
       markers.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
       
-      console.error('Found ' + markers.length + ' theme markers in comments');
-      console.error('Selected theme ID: ' + markers[0].id + ' (most recent)');
-      
+      // Output only the most recent theme ID
       console.log(markers[0].id);
     } catch (error) {
-      console.error('Error parsing comments:', error.message);
+      // Silent error - just return empty
       console.log('');
     }
-  " 2>&1 | {
-    # Capture both stdout and stderr
-    local output
-    local debug_output=""
-    while IFS= read -r line; do
-      if [[ "$line" =~ ^Found\ |^Selected\ |^Error\  ]]; then
-        debug_output="${debug_output}${line}\n"
-      else
-        output="$line"
-      fi
-    done
-    [ -n "$debug_output" ] && echo -e "$debug_output" >&2
-    echo "$output"
-  }
+  " 2>/dev/null)
+  
+  echo "$result"
 }
 
 # Export functions for use in other scripts

@@ -63,18 +63,30 @@ try {
 }
 
 const markers = [];
-const markerRegex = /<!-- THEME_NAME:(.+?):ID:(\d+):END -->/g;
+// Look for both old and new marker formats
+const oldMarkerRegex = /<!-- THEME_NAME:(.+?):ID:(\d+):END -->/g;
+const newMarkerRegex = /<!-- SHOPIFY_THEME_ID: (\d+) -->/g;
 
 for (const comment of comments) {
   if (!comment || typeof comment.body !== "string") {
     continue;
   }
 
+  // Check for old format markers
   let match;
-  while ((match = markerRegex.exec(comment.body)) !== null) {
+  while ((match = oldMarkerRegex.exec(comment.body)) !== null) {
     markers.push({
       name: match[1],
       id: match[2],
+      timestamp: comment.updated_at || comment.created_at || ""
+    });
+  }
+  
+  // Check for new format markers (SHOPIFY_THEME_ID)
+  while ((match = newMarkerRegex.exec(comment.body)) !== null) {
+    markers.push({
+      name: null,  // New format doesn't include name
+      id: match[1],
       timestamp: comment.updated_at || comment.created_at || ""
     });
   }
@@ -84,21 +96,27 @@ if (!markers.length) {
   process.exit(0);
 }
 
+// Sort by timestamp (most recent last)
 markers.sort((a, b) => {
   if (a.timestamp && b.timestamp) {
-    return new Date(a.timestamp) - new Date(b.timestamp);
+    return new Date(b.timestamp) - new Date(a.timestamp);
   }
   if (a.timestamp) {
-    return -1;
+    return 1;
   }
   if (b.timestamp) {
-    return 1;
+    return -1;
   }
   return 0;
 });
 
-const latest = markers[markers.length - 1];
-process.stdout.write(`${latest.name}|${latest.id}`);
+const latest = markers[0];  // Get the most recent (first after reverse sort)
+if (latest.name) {
+  process.stdout.write(`${latest.name}|${latest.id}`);
+} else {
+  // For new format, just return the ID
+  process.stdout.write(`|${latest.id}`);
+}
 NODE
 }
 
@@ -122,7 +140,11 @@ THEME_MARKER=$(printf '%s' "$COMMENTS" | extract_latest_theme_marker)
 if [ -n "$THEME_MARKER" ]; then
   THEME_NAME_FROM_COMMENT=${THEME_MARKER%|*}
   THEME_ID=${THEME_MARKER##*|}
-  echo "✅ Found theme marker in PR comments (name: ${THEME_NAME_FROM_COMMENT}, ID: ${THEME_ID})"
+  if [ -n "$THEME_NAME_FROM_COMMENT" ]; then
+    echo "✅ Found theme marker in PR comments (name: ${THEME_NAME_FROM_COMMENT}, ID: ${THEME_ID})"
+  else
+    echo "✅ Found theme ID in PR comments: ${THEME_ID}"
+  fi
 else
   echo "ℹ️ No theme marker found in PR comments"
 fi
