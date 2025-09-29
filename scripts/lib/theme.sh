@@ -308,6 +308,8 @@ create_theme_with_retry() {
   CREATED_THEME_ID=""
   THEME_ERRORS=""
   LAST_UPLOAD_OUTPUT=""
+  COMMENT_POSTED="false"
+  export COMMENT_POSTED
 
   while [ $attempt -lt $max_retries ]; do
     if [ -z "$CREATED_THEME_ID" ]; then
@@ -341,6 +343,8 @@ create_theme_with_retry() {
 
         THEME_ERRORS="Theme limit reached and older previews could not be removed automatically."
         post_error_comment "$THEME_ERRORS" ""
+        COMMENT_POSTED="true"
+        export COMMENT_POSTED
         # Slack notification will be sent by deploy.sh
         return 1
       fi
@@ -379,23 +383,24 @@ create_theme_with_retry() {
           THEME_ERRORS=$(echo "$parsed_json" | extract_json_value "" "format_errors")
           [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$OUTPUT"
           
-          # ALWAYS cleanup the failed theme immediately
+          # If theme was created despite errors, post error comment with theme details
           if [ -n "$CREATED_THEME_ID" ]; then
-            echo "🧹 Cleaning up theme ${CREATED_THEME_ID} that was created with errors..."
-            if cleanup_failed_theme "$CREATED_THEME_ID"; then
-              echo "✅ Failed theme ${CREATED_THEME_ID} has been removed"
-              CREATED_THEME_ID=""
-            else
-              echo "⚠️ WARNING: Could not cleanup failed theme ${CREATED_THEME_ID}"
-            fi
+            echo "⚠️ Theme ${CREATED_THEME_ID} was created but has errors"
+            # Post comment with theme ID so user can see the preview even with errors
+            post_error_comment "$THEME_ERRORS" "$CREATED_THEME_ID"
+            COMMENT_POSTED="true"
+            export COMMENT_POSTED
+            # Don't cleanup - let the user see the theme with errors
+            # Return 0 to indicate partial success
+            return 0
+          else
+            # Theme wasn't created at all
+            post_error_comment "$THEME_ERRORS" ""
+            COMMENT_POSTED="true"
+            export COMMENT_POSTED
+            echo "🛑 Stopping - validation errors prevented theme creation"
+            return 1
           fi
-          
-          # Exit immediately - NO RETRIES for validation errors
-          post_error_comment "$THEME_ERRORS" ""
-          # Slack notification will be sent by deploy.sh with cleanup status
-          
-          echo "🛑 Stopping - validation errors cannot be fixed by retrying"
-          return 1
         fi
 
         if [ -n "$warning_message" ] && [ "$warning_message" != "null" ]; then

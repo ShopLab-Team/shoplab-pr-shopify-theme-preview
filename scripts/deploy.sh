@@ -43,6 +43,7 @@ THEME_ERRORS=""
 THEME_WARNINGS=""
 LAST_DELETE_OUTPUT=""
 LAST_UPLOAD_OUTPUT=""
+COMMENT_POSTED="false"
 
 # Check for rebuild-theme label
 HAS_REBUILD_LABEL="false"
@@ -299,7 +300,7 @@ else
 fi
 
 if create_theme_with_retry "${THEME_NAME}"; then
-  echo "🎉 Theme created and deployed successfully!"
+  echo "🎉 Theme created and deployed!"
   
   # Get preview URL
   STORE_URL="${SHOPIFY_FLAG_STORE}"
@@ -308,8 +309,12 @@ if create_theme_with_retry "${THEME_NAME}"; then
   STORE_URL="${STORE_URL%/}"
   PREVIEW_URL="https://${STORE_URL}?preview_theme_id=${CREATED_THEME_ID}"
   
-  # Post success comment
-  COMMENT_BODY="## ✅ Shopify Theme Preview Created
+  # Check if a comment was already posted by create_theme_with_retry
+  if [ "$COMMENT_POSTED" = "true" ]; then
+    echo "ℹ️ Comment already posted by theme creation function"
+  else
+    # Only post success comment if no comment was posted yet
+    COMMENT_BODY="## ✅ Shopify Theme Preview Created
 
 Your theme preview has been created successfully!
 
@@ -320,22 +325,23 @@ Your theme preview has been created successfully!
 
 <!-- SHOPIFY_THEME_ID: ${CREATED_THEME_ID} -->"
 
-  if [ -n "$THEME_ERRORS" ]; then
-    # Clean error message for display
-    CLEANED_ERRORS=$(clean_for_slack "$THEME_ERRORS")
-    COMMENT_BODY="${COMMENT_BODY}
+    if [ -n "$THEME_ERRORS" ]; then
+      # Clean error message for display
+      CLEANED_ERRORS=$(clean_for_slack "$THEME_ERRORS")
+      COMMENT_BODY="${COMMENT_BODY}
 
 ### ⚠️ Warnings:
 \`\`\`
 ${CLEANED_ERRORS}
 \`\`\`"
-  fi
+    fi
 
-  # Post comment
-  if post_pr_comment "$PR_NUMBER" "$COMMENT_BODY"; then
-    echo "✅ Success comment posted"
-  else
-    echo "⚠️ Failed to post success comment"
+    # Post comment
+    if post_pr_comment "$PR_NUMBER" "$COMMENT_BODY"; then
+      echo "✅ Success comment posted"
+    else
+      echo "⚠️ Failed to post success comment"
+    fi
   fi
   
   # Send Slack notification
@@ -359,8 +365,10 @@ else
     if cleanup_failed_theme "$CREATED_THEME_ID"; then
       echo "✅ Failed theme ${CREATED_THEME_ID} cleaned up"
       
-      # Post error without theme ID since we cleaned it up
-      post_error_comment "$THEME_ERRORS" ""
+      # Post error without theme ID since we cleaned it up (if not already posted)
+      if [ "$COMMENT_POSTED" != "true" ]; then
+        post_error_comment "$THEME_ERRORS" ""
+      fi
       
       # Adjust error message to indicate cleanup was successful
       cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
@@ -368,8 +376,10 @@ else
     else
       echo "⚠️ WARNING: Could not cleanup failed theme ${CREATED_THEME_ID}"
       
-      # Post error with theme ID since it still exists
-      post_error_comment "$THEME_ERRORS" "$CREATED_THEME_ID"
+      # Post error with theme ID since it still exists (if not already posted)
+      if [ "$COMMENT_POSTED" != "true" ]; then
+        post_error_comment "$THEME_ERRORS" "$CREATED_THEME_ID"
+      fi
       
       # Include preview URL in Slack notification since theme exists
       preview_url=""
@@ -386,7 +396,9 @@ else
     fi
   else
     # No theme was created at all
-    post_error_comment "$THEME_ERRORS" ""
+    if [ "$COMMENT_POSTED" != "true" ]; then
+      post_error_comment "$THEME_ERRORS" ""
+    fi
     
     cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
     send_slack_notification "error" "Theme creation failed:\n${cleaned_errors}" "" ""
