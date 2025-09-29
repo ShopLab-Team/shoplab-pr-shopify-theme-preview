@@ -228,6 +228,8 @@ Your theme preview has been updated successfully!
 - **Preview URL**: [View Preview](${PREVIEW_URL})
 - **Admin URL**: [Theme Editor](https://${STORE_URL}/admin/themes/${EXISTING_THEME_ID}/editor)
 
+_Last updated: $(date '+%Y-%m-%d %H:%M:%S %Z')_
+
 <!-- SHOPIFY_THEME_ID: ${EXISTING_THEME_ID} -->"
 
     if [ -n "$THEME_ERRORS" ]; then
@@ -317,6 +319,8 @@ Your theme preview has been created successfully!
 - **Theme ID**: \`${CREATED_THEME_ID}\`
 - **Preview URL**: [View Preview](${PREVIEW_URL})
 - **Admin URL**: [Theme Editor](https://${STORE_URL}/admin/themes/${CREATED_THEME_ID}/editor)
+
+_Created: $(date '+%Y-%m-%d %H:%M:%S %Z')_
 
 <!-- SHOPIFY_THEME_ID: ${CREATED_THEME_ID} -->"
 

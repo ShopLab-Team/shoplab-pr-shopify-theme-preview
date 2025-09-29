@@ -67,11 +67,76 @@ github_api() {
 }
 
 # Function to post comment on PR
+# Function to find existing comment with theme ID
+find_comment_with_theme_id() {
+  local pr_number="$1"
+  local theme_id="$2"
+  local comments="$3"
+  
+  # If comments not provided, fetch them
+  if [ -z "$comments" ]; then
+    comments=$(fetch_pr_comments "$pr_number")
+  fi
+  
+  # Find comment with the theme ID marker
+  echo "$comments" | node -e "
+    const data = require('fs').readFileSync(0, 'utf8');
+    const themeId = process.argv[1];
+    try {
+      const comments = JSON.parse(data);
+      // Look for the theme ID marker in comment body
+      const marker = '<!-- SHOPIFY_THEME_ID: ' + themeId + ' -->';
+      const found = comments.find(c => c.body && c.body.includes(marker));
+      if (found) {
+        console.log(found.id);
+      } else {
+        console.log('');
+      }
+    } catch (e) {
+      console.log('');
+    }
+  " -- "$theme_id"
+}
+
+# Function to update an existing comment
+update_pr_comment() {
+  local comment_id="$1"
+  local comment_body="$2"
+  local repo="${GITHUB_REPOSITORY}"
+  
+  local json_body
+  json_body=$(node -e "
+    const body = process.argv[1];
+    console.log(JSON.stringify({ body: body }));
+  " -- "$comment_body")
+  
+  github_api "/repos/${repo}/issues/comments/${comment_id}" "PATCH" "$json_body"
+}
+
+# Function to post or update PR comment based on theme ID
 post_pr_comment() {
   local pr_number="$1"
   local comment_body="$2"
   local repo="${GITHUB_REPOSITORY}"
   
+  # Extract theme ID from comment body if present
+  local theme_id
+  theme_id=$(echo "$comment_body" | sed -n 's/.*<!-- SHOPIFY_THEME_ID: \([0-9]*\) -->.*/\1/p' || echo "")
+  
+  # If theme ID exists, check for existing comment
+  if [ -n "$theme_id" ]; then
+    local existing_comment_id
+    existing_comment_id=$(find_comment_with_theme_id "$pr_number" "$theme_id")
+    
+    if [ -n "$existing_comment_id" ]; then
+      echo "📝 Updating existing comment (ID: ${existing_comment_id}) for theme ${theme_id}" >&2
+      update_pr_comment "$existing_comment_id" "$comment_body"
+      return $?
+    fi
+  fi
+  
+  # No existing comment found or no theme ID, create new comment
+  echo "💬 Creating new comment" >&2
   local json_body
   json_body=$(node -e "
     const body = process.argv[1];
@@ -112,6 +177,8 @@ pr_has_label() {
 
 # Export functions for use in other scripts
 export -f github_api
+export -f find_comment_with_theme_id
+export -f update_pr_comment
 export -f post_pr_comment
 export -f fetch_pr_comments
 export -f pr_has_label
