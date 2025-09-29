@@ -109,7 +109,8 @@ wait $COMMENTS_PID $THEME_LIST_PID 2>/dev/null || true
 
 # Extract theme ID from comments if exists
 if [ -n "$COMMENTS" ]; then
-  EXISTING_THEME_ID=$(echo "$COMMENTS" | extract_latest_theme_marker)
+  # Suppress broken pipe error when Node exits early (happens when no markers found)
+  EXISTING_THEME_ID=$(echo "$COMMENTS" 2>/dev/null | extract_latest_theme_marker || true)
   if [ -n "$EXISTING_THEME_ID" ]; then
     echo "📋 Found theme ID ${EXISTING_THEME_ID} in PR comments"
   else

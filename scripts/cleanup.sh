@@ -135,7 +135,8 @@ COMMENTS=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments"
 THEME_ID=""
 THEME_NAME_FROM_COMMENT=""
 
-THEME_MARKER=$(printf '%s' "$COMMENTS" | extract_latest_theme_marker)
+# Suppress broken pipe error when Node exits early (happens when no markers found)
+THEME_MARKER=$(printf '%s' "$COMMENTS" 2>/dev/null | extract_latest_theme_marker || true)
 
 if [ -n "$THEME_MARKER" ]; then
   THEME_NAME_FROM_COMMENT=${THEME_MARKER%|*}
