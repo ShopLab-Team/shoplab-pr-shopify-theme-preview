@@ -46,11 +46,11 @@ github_api() {
 
 # Helper function: extract the most recent theme marker from PR comments
 extract_latest_theme_marker() {
-  local input_json
-  input_json=$(cat)
+  # Read JSON from stdin and process it with Node.js
+  node <<'NODE'
+const fs = require('fs');
+const data = fs.readFileSync(0, 'utf8');  // Read from stdin
 
-  COMMENTS_JSON="$input_json" node - <<'NODE'
-const data = process.env.COMMENTS_JSON || "";
 if (!data.trim()) {
   process.exit(0);
 }
