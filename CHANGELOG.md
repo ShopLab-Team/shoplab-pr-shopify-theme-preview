@@ -186,6 +186,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Notification comments when themes are auto-removed
 - **Error Reporting**: Shopify errors are now posted as PR comments for visibility
 - **Slack Integration**: Optional Slack webhook notifications for initial deployments and errors (not updates)
+- **MS Teams Integration**: Optional Microsoft Teams webhook notifications for initial deployments and errors (not updates)
 - **Improved Retry Logic**: When uploads fail, retries use the same theme ID instead of creating duplicates
 - **No-Sync Mode**: Skip pulling production settings during initial theme creation (updates always preserve settings)
 

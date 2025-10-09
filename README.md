@@ -16,6 +16,7 @@ Automatically deploy and manage Shopify preview themes for pull requests. This G
 - 🎯 **Theme Limit Handling** - Automatically manages Shopify's 20-theme limit
 - ⚠️ **Error Reporting** - Posts Shopify errors as PR comments for easy debugging
 - 💬 **Slack Notifications** - Optional Slack webhook integration for deployment status
+- 📢 **MS Teams Notifications** - Optional Microsoft Teams webhook integration for deployment status
 - 🔄 **No-Sync Mode** - Option to use repository JSON files without production sync
 
 ## 🎯 Automatic Theme Limit Management
@@ -150,6 +151,7 @@ jobs:
 | `build-command` | Command to build assets before deployment | None |
 | `node-version` | Node.js version to use | `20` |
 | `slack-webhook-url` | Slack webhook URL for notifications | None |
+| `ms-teams-webhook-url` | Microsoft Teams webhook URL for notifications | None |
 
 ## 🎯 Advanced Usage
 
@@ -242,6 +244,49 @@ You'll receive notifications for:
 - 🧹 Theme cleanup events
 
 **Note:** Theme updates do not trigger notifications to avoid spam
+
+### With Microsoft Teams Notifications
+
+To receive deployment notifications in Microsoft Teams:
+
+1. [Create an Incoming Webhook in MS Teams](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook)
+2. Add it as a GitHub secret: `MS_TEAMS_WEBHOOK_URL`
+3. Include it in your workflow:
+
+```yaml
+- name: Deploy/Update PR Theme
+  uses: ShopLab-Team/shoplab-pr-shopify-theme-preview@v1
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
+    shopify-cli-theme-token: ${{ secrets.SHOPIFY_CLI_THEME_TOKEN }}
+    ms-teams-webhook-url: ${{ secrets.MS_TEAMS_WEBHOOK_URL }}
+    action-type: 'deploy'
+```
+
+You'll receive notifications for:
+- ✅ Initial theme creation with preview links
+- ⚠️ Themes created with warnings  
+- ❌ Failed deployments with error details
+- 🧹 Theme cleanup events
+
+**Note:** Theme updates do not trigger notifications to avoid spam
+
+### Using Both Slack and MS Teams
+
+You can enable both notification channels simultaneously:
+
+```yaml
+- name: Deploy/Update PR Theme
+  uses: ShopLab-Team/shoplab-pr-shopify-theme-preview@v1
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
+    shopify-cli-theme-token: ${{ secrets.SHOPIFY_CLI_THEME_TOKEN }}
+    slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+    ms-teams-webhook-url: ${{ secrets.MS_TEAMS_WEBHOOK_URL }}
+    action-type: 'deploy'
+```
 
 ### Using Repository JSON Files (no-sync)
 

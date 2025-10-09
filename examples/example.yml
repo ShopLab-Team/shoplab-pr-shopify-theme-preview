@@ -60,6 +60,7 @@ jobs:
           # build-command: 'npm run build'  # Command to build assets before deployment
           # node-version: '20'  # Node.js version (defaults to 20)
           # slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}  # Slack webhook for notifications
+          # ms-teams-webhook-url: ${{ secrets.MS_TEAMS_WEBHOOK_URL }}  # MS Teams webhook for notifications
 
       - name: Cleanup PR Theme
         if: github.event.action == 'closed'
@@ -73,3 +74,4 @@ jobs:
           
           # OPTIONAL inputs
           # slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}  # Slack webhook for notifications
+          # ms-teams-webhook-url: ${{ secrets.MS_TEAMS_WEBHOOK_URL }}  # MS Teams webhook for notifications

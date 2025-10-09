@@ -34,6 +34,10 @@ inputs:
     description: 'Slack webhook URL for notifications (optional)'
     required: false
     default: ''
+  ms-teams-webhook-url:
+    description: 'Microsoft Teams webhook URL for notifications (optional)'
+    required: false
+    default: ''
 
 outputs:
   theme-id:
@@ -86,6 +90,7 @@ runs:
         PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
         ACTION_TYPE: ${{ inputs.action-type }}
         SLACK_WEBHOOK_URL: ${{ inputs.slack-webhook-url }}
+        MS_TEAMS_WEBHOOK_URL: ${{ inputs.ms-teams-webhook-url }}
         GITHUB_SERVER_URL: ${{ github.server_url }}
         GITHUB_REPOSITORY: ${{ github.repository }}
       run: |

@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh" && COMMON_UTILS_LOADED=1
 source "${SCRIPT_DIR}/lib/github.sh" && GITHUB_API_LOADED=1
 source "${SCRIPT_DIR}/lib/slack.sh" && SLACK_API_LOADED=1
+source "${SCRIPT_DIR}/lib/msteams.sh" && MSTEAMS_API_LOADED=1
 source "${SCRIPT_DIR}/lib/theme.sh" && THEME_API_LOADED=1
 
 echo "🚀 Starting Shopify PR Theme deployment..."
@@ -346,8 +347,10 @@ ${CLEANED_ERRORS}
   # Send Slack notification
   if [ -n "$THEME_ERRORS" ]; then
     send_slack_notification "warning" "Theme created with warnings:\n${CLEANED_ERRORS}" "$PREVIEW_URL" "$CREATED_THEME_ID"
+    send_msteams_notification "warning" "Theme created with warnings:\n${CLEANED_ERRORS}" "$PREVIEW_URL" "$CREATED_THEME_ID"
   else
     send_slack_notification "success" "Theme created successfully!" "$PREVIEW_URL" "$CREATED_THEME_ID"
+    send_msteams_notification "success" "Theme created successfully!" "$PREVIEW_URL" "$CREATED_THEME_ID"
   fi
   
   # Set outputs for GitHub Action
@@ -370,6 +373,7 @@ else
       # Adjust error message to indicate cleanup was successful
       cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
       send_slack_notification "error" "Theme creation failed:\n${cleaned_errors}\n\nThe failed theme has been cleaned up." "" ""
+      send_msteams_notification "error" "Theme creation failed:\n${cleaned_errors}\n\nThe failed theme has been cleaned up." "" ""
     else
       echo "⚠️ WARNING: Could not cleanup failed theme ${CREATED_THEME_ID}"
       
@@ -388,6 +392,7 @@ else
       
       cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
       send_slack_notification "error" "Theme creation failed:\n${cleaned_errors}\n\n⚠️ Failed theme ${CREATED_THEME_ID} could not be cleaned up - manual cleanup required!" "$preview_url" "$CREATED_THEME_ID"
+      send_msteams_notification "error" "Theme creation failed:\n${cleaned_errors}\n\n⚠️ Failed theme ${CREATED_THEME_ID} could not be cleaned up - manual cleanup required!" "$preview_url" "$CREATED_THEME_ID"
     fi
   else
     # No theme was created at all
@@ -395,6 +400,7 @@ else
     
     cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
     send_slack_notification "error" "Theme creation failed:\n${cleaned_errors}" "" ""
+    send_msteams_notification "error" "Theme creation failed:\n${cleaned_errors}" "" ""
   fi
   
   exit 1
