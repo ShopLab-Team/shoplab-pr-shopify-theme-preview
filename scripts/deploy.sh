@@ -187,13 +187,16 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
       THEME_SELECTOR="--live"
     fi
     
-    echo "⬇️ Pulling JSON configuration files (excluding settings_schema.json)..."
+    echo "⬇️ Pulling JSON configuration files (excluding settings_schema.json and en.default locale files)..."
     
-    # Pull only JSON files to preserve settings, but exclude settings_schema.json which must come from codebase
-    if ! shopify theme pull $THEME_SELECTOR --only="*.json" --ignore="config/settings_schema.json" --no-color 2>&1; then
+    # Pull only JSON files to preserve settings, but exclude files that must come from codebase:
+    # - config/settings_schema.json (theme schema definitions)
+    # - locales/en.default.json (English default translations)
+    # - locales/en.default.schema.json (English locale schema, if exists)
+    if ! shopify theme pull $THEME_SELECTOR --only="*.json" --ignore="config/settings_schema.json" --ignore="locales/en.default.json" --ignore="locales/en.default.schema.json" --no-color 2>&1; then
       echo "⚠️ Warning: Could not pull settings from source theme"
     else
-      echo "✅ Settings pulled successfully (settings_schema.json preserved from codebase)"
+      echo "✅ Settings pulled successfully (settings_schema.json and en.default locale files preserved from codebase)"
     fi
   else
     echo "💾 Preserving existing theme settings (no rebuild-theme label)"
@@ -290,13 +293,16 @@ if [ "$HAS_NO_SYNC_LABEL" = "false" ]; then
     THEME_SELECTOR="--live"
   fi
 
-  echo "⬇️ Pulling JSON configuration files (excluding settings_schema.json)..."
+  echo "⬇️ Pulling JSON configuration files (excluding settings_schema.json and en.default locale files)..."
 
-  # Pull only JSON files to get current settings, but exclude settings_schema.json which must come from codebase
-  if ! shopify theme pull $THEME_SELECTOR --only="*.json" --ignore="config/settings_schema.json" --no-color 2>&1; then
+  # Pull only JSON files to get current settings, but exclude files that must come from codebase:
+  # - config/settings_schema.json (theme schema definitions)
+  # - locales/en.default.json (English default translations)
+  # - locales/en.default.schema.json (English locale schema, if exists)
+  if ! shopify theme pull $THEME_SELECTOR --only="*.json" --ignore="config/settings_schema.json" --ignore="locales/en.default.json" --ignore="locales/en.default.schema.json" --no-color 2>&1; then
     echo "⚠️ Warning: Could not pull settings from source theme"
   else
-    echo "✅ Settings pulled successfully (settings_schema.json preserved from codebase)"
+    echo "✅ Settings pulled successfully (settings_schema.json and en.default locale files preserved from codebase)"
   fi
 else
   echo "⏭️ Skipping JSON configuration pull due to 'no-sync' label"

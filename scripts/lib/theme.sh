@@ -229,9 +229,10 @@ upload_theme() {
   LAST_UPLOAD_OUTPUT=""
   
   # If we should not include JSON, add ignore flags for specific JSON files
-  # Always allow locales/en.default.json and config/settings_schema.json
+  # Always push from codebase: config/settings_schema.json, locales/en.default.json, locales/en.default.schema.json
+  # Never overwrite: config/settings_data.json, templates/*.json, sections/*.json, layout/*.json
   if [ "$include_json" = "false" ]; then
-    echo "📤 Uploading theme to ID: ${theme_id} (preserving settings, allowing locale & schema updates)..."
+    echo "📤 Uploading theme to ID: ${theme_id} (preserving settings, always pushing locale & schema from codebase)..."
     set +e
     OUTPUT=$(shopify theme push \
       --theme "$theme_id" \
