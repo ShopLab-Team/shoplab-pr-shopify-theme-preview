@@ -370,46 +370,27 @@ else
   echo "❌ Failed to create theme"
   
   # Always try to cleanup any partially created theme
+  cleanup_note=""
   if [ -n "$CREATED_THEME_ID" ]; then
     echo "🧹 Attempting to cleanup failed theme ${CREATED_THEME_ID}..."
     if cleanup_failed_theme "$CREATED_THEME_ID"; then
       echo "✅ Failed theme ${CREATED_THEME_ID} cleaned up"
-      
-      # Post error without theme ID since we cleaned it up
-      post_error_comment "$THEME_ERRORS" ""
-      
-      # Adjust error message to indicate cleanup was successful
-      cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
-      send_slack_notification "error" "Theme creation failed:\n${cleaned_errors}\n\nThe failed theme has been cleaned up." "" ""
-      send_msteams_notification "error" "Theme creation failed:\n${cleaned_errors}\n\nThe failed theme has been cleaned up." "" ""
+      cleanup_note="The failed theme has been cleaned up."
     else
       echo "⚠️ WARNING: Could not cleanup failed theme ${CREATED_THEME_ID}"
-      
-      # Post error with theme ID since it still exists
-      post_error_comment "$THEME_ERRORS" "$CREATED_THEME_ID"
-      
-      # Include preview URL in Slack notification since theme exists
-      preview_url=""
-      if [ -n "$CREATED_THEME_ID" ]; then
-        store_url="${SHOPIFY_FLAG_STORE}"
-        store_url="${store_url#https://}"
-        store_url="${store_url#http://}"
-        store_url="${store_url%/}"
-        preview_url="https://${store_url}?preview_theme_id=${CREATED_THEME_ID}"
-      fi
-      
-      cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
-      send_slack_notification "error" "Theme creation failed:\n${cleaned_errors}\n\n⚠️ Failed theme ${CREATED_THEME_ID} could not be cleaned up - manual cleanup required!" "$preview_url" "$CREATED_THEME_ID"
-      send_msteams_notification "error" "Theme creation failed:\n${cleaned_errors}\n\n⚠️ Failed theme ${CREATED_THEME_ID} could not be cleaned up - manual cleanup required!" "$preview_url" "$CREATED_THEME_ID"
+      cleanup_note="⚠️ Failed theme ${CREATED_THEME_ID} could not be cleaned up - manual cleanup required in Shopify admin!"
     fi
-  else
-    # No theme was created at all
-    post_error_comment "$THEME_ERRORS" ""
-    
-    cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
-    send_slack_notification "error" "Theme creation failed:\n${cleaned_errors}" "" ""
-    send_msteams_notification "error" "Theme creation failed:\n${cleaned_errors}" "" ""
   fi
+  
+  # Post error comment (never includes theme details for failed themes)
+  post_error_comment "$THEME_ERRORS" ""
+  
+  # Send Slack/Teams notifications
+  cleaned_errors=$(clean_for_slack "$THEME_ERRORS")
+  notification_msg="Theme creation failed:\n${cleaned_errors}"
+  [ -n "$cleanup_note" ] && notification_msg="${notification_msg}\n\n${cleanup_note}"
+  send_slack_notification "error" "$notification_msg" "" ""
+  send_msteams_notification "error" "$notification_msg" "" ""
   
   exit 1
 fi

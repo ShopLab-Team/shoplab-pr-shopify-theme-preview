@@ -153,9 +153,11 @@ handle_theme_limit() {
 }
 
 # Function to post error comment on PR
+# Note: theme_id parameter is kept for backward compatibility but no longer used
+# Themes with errors are always deleted, so we never show theme details in error comments
 post_error_comment() {
   local error_message=$1
-  local theme_id=$2
+  local theme_id=$2  # Ignored - themes with errors are deleted
   
   echo "💬 Posting error comment to PR..."
   
@@ -163,38 +165,14 @@ post_error_comment() {
   local cleaned_error
   cleaned_error=$(clean_for_slack "$error_message")
   
-  local comment_body=""
+  # Get store URL for context
+  local store_url="${SHOPIFY_FLAG_STORE}"
+  store_url="${store_url#https://}"
+  store_url="${store_url#http://}"
+  store_url="${store_url%/}"
   
-  if [ -n "$theme_id" ]; then
-    # Theme was created but with errors
-    STORE_URL="${SHOPIFY_FLAG_STORE}"
-    STORE_URL="${STORE_URL#https://}"
-    STORE_URL="${STORE_URL#http://}"
-    STORE_URL="${STORE_URL%/}"
-    PREVIEW_URL="https://${STORE_URL}?preview_theme_id=${theme_id}"
-    
-    comment_body=$(cat <<EOF
-## ⚠️ Shopify Theme Preview Created with Errors
-
-Your theme preview has been created but encountered errors during upload:
-
-\`\`\`
-${cleaned_error}
-\`\`\`
-
-### Theme Details:
-- **Theme ID**: \`${theme_id}\`
-- **Preview URL**: [View Preview](${PREVIEW_URL})
-- **Admin URL**: [Theme Editor](https://${STORE_URL}/admin/themes/${theme_id}/editor)
-
-**Note**: The theme may be missing files or functionality due to these errors. Please fix the issues and push your changes to update the preview.
-
-<!-- SHOPIFY_THEME_ID: ${theme_id} -->
-EOF
-)
-  else
-    # Theme creation failed completely
-    comment_body=$(cat <<EOF
+  local comment_body
+  comment_body=$(cat <<EOF
 ## ❌ Shopify Theme Preview Failed
 
 Failed to create theme preview due to the following errors:
@@ -203,10 +181,12 @@ Failed to create theme preview due to the following errors:
 ${cleaned_error}
 \`\`\`
 
+### Store Info:
+- **Store URL**: \`${store_url}\`
+
 Please fix these issues and push your changes to trigger a new deployment.
 EOF
 )
-  fi
 
   # Use the github_api function to post comment
   if post_pr_comment "$PR_NUMBER" "$comment_body"; then

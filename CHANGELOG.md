@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Store URL is now displayed in PR comment notifications alongside Theme ID, Preview URL, and Admin URL
 
+### Changed
+- Error comments now only show the error and store URL (no theme details)
+- Themes created with errors are always deleted and never shown in PR comments
+- Simplified error handling flow in deploy.sh
+
 ## [1.0.0] - 2025-01-01
 
 ### Added
