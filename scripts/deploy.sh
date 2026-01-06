@@ -230,6 +230,7 @@ Your theme preview has been updated successfully!
 
 ### Theme Details:
 - **Theme ID**: \`${EXISTING_THEME_ID}\`
+- **Store URL**: \`${STORE_URL}\`
 - **Preview URL**: [View Preview](${PREVIEW_URL})
 - **Admin URL**: [Theme Editor](https://${STORE_URL}/admin/themes/${EXISTING_THEME_ID}/editor)
 
@@ -325,6 +326,7 @@ Your theme preview has been created successfully!
 
 ### Theme Details:
 - **Theme ID**: \`${CREATED_THEME_ID}\`
+- **Store URL**: \`${STORE_URL}\`
 - **Preview URL**: [View Preview](${PREVIEW_URL})
 - **Admin URL**: [Theme Editor](https://${STORE_URL}/admin/themes/${CREATED_THEME_ID}/editor)
 
