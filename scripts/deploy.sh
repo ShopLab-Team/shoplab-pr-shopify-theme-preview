@@ -14,6 +14,24 @@ source "${SCRIPT_DIR}/lib/theme.sh" && THEME_API_LOADED=1
 
 echo "🚀 Starting Shopify PR Theme deployment..."
 
+# Set theme root directory (default to current directory)
+THEME_ROOT="${THEME_ROOT:-.}"
+# Convert to absolute path if relative
+if [[ "$THEME_ROOT" != /* ]]; then
+  THEME_ROOT="$(pwd)/${THEME_ROOT}"
+fi
+# Remove trailing slash if present
+THEME_ROOT="${THEME_ROOT%/}"
+export THEME_ROOT
+
+# Verify theme root directory exists
+if [ ! -d "$THEME_ROOT" ]; then
+  echo "❌ Error: Theme root directory does not exist: ${THEME_ROOT}"
+  exit 1
+fi
+
+echo "📁 Theme root directory: ${THEME_ROOT}"
+
 # Check required environment variables
 if [ -z "$GITHUB_TOKEN" ]; then
   echo "Error: GITHUB_TOKEN is required"
@@ -193,7 +211,7 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
     # - config/settings_schema.json (theme schema definitions)
     # - locales/en.default.json (English default translations)
     # - locales/en.default.schema.json (English locale schema, if exists)
-    if ! shopify theme pull $THEME_SELECTOR --only="*.json" --ignore="config/settings_schema.json" --ignore="locales/en.default.json" --ignore="locales/en.default.schema.json" --no-color 2>&1; then
+    if ! shopify theme pull $THEME_SELECTOR --path "$THEME_ROOT" --only="*.json" --ignore="config/settings_schema.json" --ignore="locales/en.default.json" --ignore="locales/en.default.schema.json" --no-color 2>&1; then
       echo "⚠️ Warning: Could not pull settings from source theme"
     else
       echo "✅ Settings pulled successfully (settings_schema.json and en.default locale files preserved from codebase)"
@@ -300,7 +318,7 @@ if [ "$HAS_NO_SYNC_LABEL" = "false" ]; then
   # - config/settings_schema.json (theme schema definitions)
   # - locales/en.default.json (English default translations)
   # - locales/en.default.schema.json (English locale schema, if exists)
-  if ! shopify theme pull $THEME_SELECTOR --only="*.json" --ignore="config/settings_schema.json" --ignore="locales/en.default.json" --ignore="locales/en.default.schema.json" --no-color 2>&1; then
+  if ! shopify theme pull $THEME_SELECTOR --path "$THEME_ROOT" --only="*.json" --ignore="config/settings_schema.json" --ignore="locales/en.default.json" --ignore="locales/en.default.schema.json" --no-color 2>&1; then
     echo "⚠️ Warning: Could not pull settings from source theme"
   else
     echo "✅ Settings pulled successfully (settings_schema.json and en.default locale files preserved from codebase)"

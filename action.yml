@@ -38,6 +38,10 @@ inputs:
     description: 'Microsoft Teams webhook URL for notifications (optional)'
     required: false
     default: ''
+  theme-root:
+    description: 'Directory containing the theme files (optional, defaults to repository root)'
+    required: false
+    default: '.'
 
 outputs:
   theme-id:
@@ -93,6 +97,7 @@ runs:
         MS_TEAMS_WEBHOOK_URL: ${{ inputs.ms-teams-webhook-url }}
         GITHUB_SERVER_URL: ${{ github.server_url }}
         GITHUB_REPOSITORY: ${{ github.repository }}
+        THEME_ROOT: ${{ inputs.theme-root }}
       run: |
         if [ "$ACTION_TYPE" == "deploy" ]; then
           ${{ github.action_path }}/scripts/deploy.sh

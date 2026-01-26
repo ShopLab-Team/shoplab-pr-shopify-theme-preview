@@ -205,6 +205,9 @@ upload_theme() {
   local error_count
   local warning_message
   
+  # Use THEME_ROOT if set, otherwise default to current directory
+  local theme_path="${THEME_ROOT:-.}"
+  
   THEME_ERRORS=""
   LAST_UPLOAD_OUTPUT=""
   
@@ -216,6 +219,7 @@ upload_theme() {
     set +e
     OUTPUT=$(shopify theme push \
       --theme "$theme_id" \
+      --path "$theme_path" \
       --nodelete \
       --no-color \
       --json \
@@ -230,6 +234,7 @@ upload_theme() {
     set +e
     OUTPUT=$(shopify theme push \
       --theme "$theme_id" \
+      --path "$theme_path" \
       --nodelete \
       --no-color \
       --json 2>&1)
@@ -285,6 +290,9 @@ create_theme_with_retry() {
   local max_retries=1  # NO RETRIES except for rate limits
   local attempt=0
   local limit_cleanup_attempted=false
+  
+  # Use THEME_ROOT if set, otherwise default to current directory
+  local theme_path="${THEME_ROOT:-.}"
 
   CREATED_THEME_ID=""
   THEME_ERRORS=""
@@ -299,6 +307,7 @@ create_theme_with_retry() {
       OUTPUT=$(shopify theme push \
         --unpublished \
         --theme "${theme_name}" \
+        --path "$theme_path" \
         --nodelete \
         --no-color \
         --json 2>&1)

@@ -152,6 +152,7 @@ jobs:
 | `node-version` | Node.js version to use | `20` |
 | `slack-webhook-url` | Slack webhook URL for notifications | None |
 | `ms-teams-webhook-url` | Microsoft Teams webhook URL for notifications | None |
+| `theme-root` | Directory containing the theme files (useful for compiled themes) | `.` (repository root) |
 
 ## 🎯 Advanced Usage
 
@@ -181,6 +182,35 @@ If your theme requires compilation:
     action-type: 'deploy'
 ```
 
+### With Compiled Theme Directory
+
+If your build process outputs to a different directory (e.g., `dist`), use `theme-root`:
+
+```yaml
+- name: Setup Node.js
+  if: github.event.action != 'closed'
+  uses: actions/setup-node@v5
+  with:
+    node-version: '20'
+
+- name: Install dependencies
+  if: github.event.action != 'closed'
+  run: yarn install --frozen-lockfile
+
+- name: Deploy/Update PR Theme
+  if: github.event.action != 'closed'
+  uses: ShopLab-Team/shoplab-pr-shopify-theme-preview@v1
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
+    shopify-cli-theme-token: ${{ secrets.SHOPIFY_CLI_THEME_TOKEN }}
+    build-command: 'yarn webpack:build'  # Build to dist folder
+    theme-root: 'dist'  # Deploy from dist folder
+    action-type: 'deploy'
+```
+
+**Note:** The `theme-root` parameter specifies where the compiled/built theme files are located. The build command runs in the repository root, and then the action deploys from the specified `theme-root` directory.
+
 ### With Custom Source Theme
 
 To pull settings from a staging theme instead of live:
@@ -198,15 +228,13 @@ To pull settings from a staging theme instead of live:
 
 ### For Monorepos
 
-If your theme is in a subdirectory:
+If your theme is in a subdirectory, use `theme-root`:
 
 ```yaml
 - name: Checkout code
   uses: actions/checkout@v5
   with:
     ref: ${{ github.event.pull_request.head.sha }}
-    sparse-checkout: |
-      themes/my-theme
 
 - name: Deploy Theme
   uses: ShopLab-Team/shoplab-pr-shopify-theme-preview@v1
@@ -214,9 +242,11 @@ If your theme is in a subdirectory:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
     shopify-cli-theme-token: ${{ secrets.SHOPIFY_CLI_THEME_TOKEN }}
+    theme-root: 'themes/my-theme'  # Path to theme directory
     action-type: 'deploy'
-  working-directory: themes/my-theme
 ```
+
+**Note:** Use `theme-root` to specify where your theme files are located. This is preferred over `working-directory` as it's handled internally by the action.
 
 ### With Slack Notifications
 
