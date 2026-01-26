@@ -42,6 +42,10 @@ inputs:
     description: 'Directory containing the theme files (optional, defaults to repository root)'
     required: false
     default: '.'
+  ignore-files:
+    description: 'Comma-separated list of file patterns to ignore during upload (e.g., "templates/page.instant-*.json,assets/temp-*")'
+    required: false
+    default: ''
 
 outputs:
   theme-id:
@@ -98,6 +102,7 @@ runs:
         GITHUB_SERVER_URL: ${{ github.server_url }}
         GITHUB_REPOSITORY: ${{ github.repository }}
         THEME_ROOT: ${{ inputs.theme-root }}
+        IGNORE_FILES: ${{ inputs.ignore-files }}
       run: |
         if [ "$ACTION_TYPE" == "deploy" ]; then
           ${{ github.action_path }}/scripts/deploy.sh

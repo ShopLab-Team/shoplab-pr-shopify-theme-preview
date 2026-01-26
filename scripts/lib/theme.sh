@@ -196,6 +196,23 @@ EOF
   fi
 }
 
+# Helper function to build ignore flags from IGNORE_FILES env var
+build_ignore_flags() {
+  local ignore_flags=""
+  if [ -n "$IGNORE_FILES" ]; then
+    # Split comma-separated patterns and build --ignore flags
+    IFS=',' read -ra patterns <<< "$IGNORE_FILES"
+    for pattern in "${patterns[@]}"; do
+      # Trim whitespace
+      pattern=$(echo "$pattern" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+      if [ -n "$pattern" ]; then
+        ignore_flags="$ignore_flags --ignore=\"$pattern\""
+      fi
+    done
+  fi
+  echo "$ignore_flags"
+}
+
 # Function to upload theme to Shopify
 upload_theme() {
   local theme_id=$1
@@ -208,6 +225,10 @@ upload_theme() {
   # Use THEME_ROOT if set, otherwise default to current directory
   local theme_path="${THEME_ROOT:-.}"
   
+  # Build custom ignore flags from IGNORE_FILES
+  local custom_ignore_flags
+  custom_ignore_flags=$(build_ignore_flags)
+  
   THEME_ERRORS=""
   LAST_UPLOAD_OUTPUT=""
   
@@ -217,7 +238,7 @@ upload_theme() {
   if [ "$include_json" = "false" ]; then
     echo "📤 Uploading theme to ID: ${theme_id} (preserving settings, always pushing locale & schema from codebase)..."
     set +e
-    OUTPUT=$(shopify theme push \
+    OUTPUT=$(eval shopify theme push \
       --theme "$theme_id" \
       --path "$theme_path" \
       --nodelete \
@@ -226,18 +247,20 @@ upload_theme() {
       --ignore="config/settings_data.json" \
       --ignore="templates/*.json" \
       --ignore="sections/*.json" \
-      --ignore="layout/*.json" 2>&1)
+      --ignore="layout/*.json" \
+      $custom_ignore_flags 2>&1)
     status=$?
     set -e
   else
     echo "📤 Uploading theme to ID: ${theme_id}..."
     set +e
-    OUTPUT=$(shopify theme push \
+    OUTPUT=$(eval shopify theme push \
       --theme "$theme_id" \
       --path "$theme_path" \
       --nodelete \
       --no-color \
-      --json 2>&1)
+      --json \
+      $custom_ignore_flags 2>&1)
     status=$?
     set -e
   fi
@@ -293,6 +316,10 @@ create_theme_with_retry() {
   
   # Use THEME_ROOT if set, otherwise default to current directory
   local theme_path="${THEME_ROOT:-.}"
+  
+  # Build custom ignore flags from IGNORE_FILES
+  local custom_ignore_flags
+  custom_ignore_flags=$(build_ignore_flags)
 
   CREATED_THEME_ID=""
   THEME_ERRORS=""
@@ -304,13 +331,14 @@ create_theme_with_retry() {
 
       local status=0
       set +e
-      OUTPUT=$(shopify theme push \
+      OUTPUT=$(eval shopify theme push \
         --unpublished \
         --theme "${theme_name}" \
         --path "$theme_path" \
         --nodelete \
         --no-color \
-        --json 2>&1)
+        --json \
+        $custom_ignore_flags 2>&1)
       status=$?
       set -e
 
@@ -452,6 +480,7 @@ create_theme_with_retry() {
 }
 
 # Export functions for use in other scripts
+export -f build_ignore_flags
 export -f cleanup_failed_theme
 export -f check_theme_exists_by_name
 export -f handle_theme_limit

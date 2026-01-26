@@ -153,6 +153,7 @@ jobs:
 | `slack-webhook-url` | Slack webhook URL for notifications | None |
 | `ms-teams-webhook-url` | Microsoft Teams webhook URL for notifications | None |
 | `theme-root` | Directory containing the theme files (useful for compiled themes) | `.` (repository root) |
+| `ignore-files` | Comma-separated list of file patterns to ignore during upload | None |
 
 ## 🎯 Advanced Usage
 
@@ -247,6 +248,32 @@ If your theme is in a subdirectory, use `theme-root`:
 ```
 
 **Note:** Use `theme-root` to specify where your theme files are located. This is preferred over `working-directory` as it's handled internally by the action.
+
+### Ignoring Files During Upload
+
+If you have files that cause errors or shouldn't be uploaded (e.g., instant page builder templates), use `ignore-files`:
+
+```yaml
+- name: Deploy/Update PR Theme
+  uses: ShopLab-Team/shoplab-pr-shopify-theme-preview@v1
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    shopify-store-url: ${{ secrets.SHOPIFY_STORE_URL }}
+    shopify-cli-theme-token: ${{ secrets.SHOPIFY_CLI_THEME_TOKEN }}
+    ignore-files: 'templates/page.instant-*.json, sections/instant-*.json'
+    action-type: 'deploy'
+```
+
+This is useful for:
+- **Instant page builder templates** - Files like `templates/page.instant-*.json` that reference non-existent sections
+- **Temporary or generated files** - Files that shouldn't be part of the theme
+- **Third-party app templates** - Templates created by apps that may have missing dependencies
+
+**Pattern examples:**
+- `templates/page.instant-*.json` - Ignore all instant page templates
+- `sections/instant-*.json` - Ignore instant sections
+- `assets/temp-*` - Ignore temporary assets
+- `snippets/deprecated-*.liquid` - Ignore deprecated snippets
 
 ### With Slack Notifications
 
