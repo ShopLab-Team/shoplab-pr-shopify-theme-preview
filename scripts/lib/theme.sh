@@ -239,15 +239,15 @@ upload_theme() {
     echo "📤 Uploading theme to ID: ${theme_id} (preserving settings, always pushing locale & schema from codebase)..."
     set +e
     OUTPUT=$(eval shopify theme push \
-      --theme "$theme_id" \
-      --path "$theme_path" \
+      --theme \"$theme_id\" \
+      --path \"$theme_path\" \
       --nodelete \
       --no-color \
       --json \
-      --ignore="config/settings_data.json" \
-      --ignore="templates/*.json" \
-      --ignore="sections/*.json" \
-      --ignore="layout/*.json" \
+      --ignore=\"config/settings_data.json\" \
+      --ignore=\"templates/*.json\" \
+      --ignore=\"sections/*.json\" \
+      --ignore=\"layout/*.json\" \
       $custom_ignore_flags 2>&1)
     status=$?
     set -e
@@ -255,8 +255,8 @@ upload_theme() {
     echo "📤 Uploading theme to ID: ${theme_id}..."
     set +e
     OUTPUT=$(eval shopify theme push \
-      --theme "$theme_id" \
-      --path "$theme_path" \
+      --theme \"$theme_id\" \
+      --path \"$theme_path\" \
       --nodelete \
       --no-color \
       --json \
@@ -333,8 +333,8 @@ create_theme_with_retry() {
       set +e
       OUTPUT=$(eval shopify theme push \
         --unpublished \
-        --theme "${theme_name}" \
-        --path "$theme_path" \
+        --theme \"${theme_name}\" \
+        --path \"$theme_path\" \
         --nodelete \
         --no-color \
         --json \
