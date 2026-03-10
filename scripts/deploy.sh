@@ -206,12 +206,15 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
     fi
     
     echo "⬇️ Pulling JSON configuration files (excluding settings_schema.json and en.default locale files)..."
-    
+
+    # Build custom ignore flags from IGNORE_FILES (also applied during pull)
+    pull_ignore_flags=$(build_ignore_flags)
+
     # Pull only JSON files to preserve settings, but exclude files that must come from codebase:
     # - config/settings_schema.json (theme schema definitions)
     # - locales/en.default.json (English default translations)
     # - locales/en.default.schema.json (English locale schema, if exists)
-    if ! shopify theme pull $THEME_SELECTOR --path "$THEME_ROOT" --only="*.json" --ignore="config/settings_schema.json" --ignore="locales/en.default.json" --ignore="locales/en.default.schema.json" --no-color 2>&1; then
+    if ! eval shopify theme pull $THEME_SELECTOR --path "$THEME_ROOT" --only="*.json" --ignore="config/settings_schema.json" --ignore="locales/en.default.json" --ignore="locales/en.default.schema.json" $pull_ignore_flags --no-color 2>&1; then
       echo "⚠️ Warning: Could not pull settings from source theme"
     else
       echo "✅ Settings pulled successfully (settings_schema.json and en.default locale files preserved from codebase)"
@@ -314,11 +317,14 @@ if [ "$HAS_NO_SYNC_LABEL" = "false" ]; then
 
   echo "⬇️ Pulling JSON configuration files (excluding settings_schema.json and en.default locale files)..."
 
+  # Build custom ignore flags from IGNORE_FILES (also applied during pull)
+  custom_ignore_flags=$(build_ignore_flags)
+
   # Pull only JSON files to get current settings, but exclude files that must come from codebase:
   # - config/settings_schema.json (theme schema definitions)
   # - locales/en.default.json (English default translations)
   # - locales/en.default.schema.json (English locale schema, if exists)
-  if ! shopify theme pull $THEME_SELECTOR --path "$THEME_ROOT" --only="*.json" --ignore="config/settings_schema.json" --ignore="locales/en.default.json" --ignore="locales/en.default.schema.json" --no-color 2>&1; then
+  if ! eval shopify theme pull $THEME_SELECTOR --path "$THEME_ROOT" --only="*.json" --ignore="config/settings_schema.json" --ignore="locales/en.default.json" --ignore="locales/en.default.schema.json" $custom_ignore_flags --no-color 2>&1; then
     echo "⚠️ Warning: Could not pull settings from source theme"
   else
     echo "✅ Settings pulled successfully (settings_schema.json and en.default locale files preserved from codebase)"
