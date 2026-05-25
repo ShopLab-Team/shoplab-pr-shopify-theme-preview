@@ -114,17 +114,20 @@ echo "📝 Theme name: ${THEME_NAME}"
 # Find existing theme information from PR comments
 echo "🔍 Checking for existing theme..."
 
-# Fetch comments and theme list in parallel for better performance
-{
-  COMMENTS=$(fetch_pr_comments "$PR_NUMBER") &
-  COMMENTS_PID=$!
-  
-  THEME_LIST_JSON=$(shopify theme list --json 2>/dev/null) &
-  THEME_LIST_PID=$!
-} 2>/dev/null
+# Fetch comments and theme list in parallel using temp files
+# (variable assignments inside backgrounded subshells don't propagate)
+COMMENTS_TMP=$(mktemp)
+THEME_LIST_TMP=$(mktemp)
+trap 'rm -f "$COMMENTS_TMP" "$THEME_LIST_TMP"' EXIT
 
-# Wait for both operations to complete
+fetch_pr_comments "$PR_NUMBER" > "$COMMENTS_TMP" &
+COMMENTS_PID=$!
+shopify theme list --json > "$THEME_LIST_TMP" 2>/dev/null &
+THEME_LIST_PID=$!
+
 wait $COMMENTS_PID $THEME_LIST_PID 2>/dev/null || true
+COMMENTS=$(cat "$COMMENTS_TMP")
+THEME_LIST_JSON=$(cat "$THEME_LIST_TMP")
 
 # Extract theme ID from comments if exists
 if [ -n "$COMMENTS" ]; then
