@@ -237,7 +237,7 @@ upload_theme() {
   # Never overwrite: config/settings_data.json, templates/*.json, sections/*.json, layout/*.json
   if [ "$include_json" = "false" ]; then
     echo "📤 Uploading theme to ID: ${theme_id} (preserving settings, always pushing locale & schema from codebase)..."
-    set +e
+    set +e -f
     OUTPUT=$(eval shopify theme push \
       --theme \"$theme_id\" \
       --path \"$theme_path\" \
@@ -250,10 +250,10 @@ upload_theme() {
       --ignore=\"layout/*.json\" \
       $custom_ignore_flags 2>&1)
     status=$?
-    set -e
+    set -e +f
   else
     echo "📤 Uploading theme to ID: ${theme_id}..."
-    set +e
+    set +e -f
     OUTPUT=$(eval shopify theme push \
       --theme \"$theme_id\" \
       --path \"$theme_path\" \
@@ -262,7 +262,7 @@ upload_theme() {
       --json \
       $custom_ignore_flags 2>&1)
     status=$?
-    set -e
+    set -e +f
   fi
   
   LAST_UPLOAD_OUTPUT="$OUTPUT"
@@ -330,7 +330,7 @@ create_theme_with_retry() {
       echo "🎨 Creating new theme: ${theme_name} (attempt $((attempt + 1)))"
 
       local status=0
-      set +e
+      set +e -f
       OUTPUT=$(eval shopify theme push \
         --unpublished \
         --theme \"${theme_name}\" \
@@ -340,7 +340,7 @@ create_theme_with_retry() {
         --json \
         $custom_ignore_flags 2>&1)
       status=$?
-      set -e
+      set -e +f
 
       LAST_UPLOAD_OUTPUT="$OUTPUT"
       
