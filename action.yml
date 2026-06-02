@@ -29,7 +29,7 @@ inputs:
   node-version:
     description: 'Node.js version to use (optional)'
     required: false
-    default: '20'
+    default: '22'
   slack-webhook-url:
     description: 'Slack webhook URL for notifications (optional)'
     required: false
