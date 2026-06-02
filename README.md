@@ -149,7 +149,7 @@ jobs:
 |-------|-------------|---------|
 | `source-theme-id` | Theme ID to pull settings from | Uses live theme |
 | `build-command` | Command to build assets before deployment | None |
-| `node-version` | Node.js version to use | `20` |
+| `node-version` | Node.js version to use | `22` |
 | `slack-webhook-url` | Slack webhook URL for notifications | None |
 | `ms-teams-webhook-url` | Microsoft Teams webhook URL for notifications | None |
 | `theme-root` | Directory containing the theme files (useful for compiled themes) | `.` (repository root) |
@@ -166,7 +166,7 @@ If your theme requires compilation:
   if: github.event.action != 'closed'
   uses: actions/setup-node@v5
   with:
-    node-version: '20'
+    node-version: '22'
 
 - name: Install dependencies
   if: github.event.action != 'closed'
@@ -192,7 +192,7 @@ If your build process outputs to a different directory (e.g., `dist`), use `them
   if: github.event.action != 'closed'
   uses: actions/setup-node@v5
   with:
-    node-version: '20'
+    node-version: '22'
 
 - name: Install dependencies
   if: github.event.action != 'closed'

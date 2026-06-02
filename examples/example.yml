@@ -39,7 +39,7 @@ jobs:
       #   if: github.event.action != 'closed' && (github.event.action != 'labeled' || github.event.label.name == 'rebuild-theme')
       #   uses: actions/setup-node@v5
       #   with:
-      #     node-version: '20'  # OPTIONAL: defaults to 20
+      #     node-version: '22'  # OPTIONAL: defaults to 22
       
       # - name: Install dependencies
       #   if: github.event.action != 'closed' && (github.event.action != 'labeled' || github.event.label.name == 'rebuild-theme')
@@ -60,7 +60,7 @@ jobs:
           # build-command: 'npm run build'  # Command to build assets before deployment
           # theme-root: 'dist'  # Directory containing theme files (defaults to '.' repository root)
           # ignore-files: 'templates/page.instant-*.json, sections/instant-*.json'  # Patterns to ignore during upload
-          # node-version: '20'  # Node.js version (defaults to 20)
+          # node-version: '22'  # Node.js version (defaults to 22)
           # slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}  # Slack webhook for notifications
           # ms-teams-webhook-url: ${{ secrets.MS_TEAMS_WEBHOOK_URL }}  # MS Teams webhook for notifications
 
