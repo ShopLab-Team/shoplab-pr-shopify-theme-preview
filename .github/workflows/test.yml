@@ -23,6 +23,9 @@ jobs:
             bash -n "$script"
           done
           echo "✅ All scripts have valid syntax"
+
+      - name: Test pull_source_settings
+        run: bash tests/pull-source-settings.sh
           
       - name: Validate action.yml
         run: |

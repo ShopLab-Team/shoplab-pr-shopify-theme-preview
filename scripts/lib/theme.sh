@@ -213,6 +213,36 @@ build_ignore_flags() {
   echo "$ignore_flags"
 }
 
+# Pull JSON settings and block files from the source theme into THEME_ROOT.
+# Pulls into a temp dir instead of the checkout: a plain `theme pull` into the checkout
+# deleted files the source theme lacks (e.g. blocks or templates the PR adds) and replaced
+# blocks the PR changed. JSON from the source theme still wins (store-owned settings);
+# blocks are only added when the checkout doesn't have them (e.g. AI-generated blocks).
+# Usage: pull_source_settings <theme selector flags> <extra ignore flags>
+pull_source_settings() {
+  local selector=$1
+  local extra_flags=$2
+  local pull_dir
+  pull_dir=$(mktemp -d)
+
+  if ! eval shopify theme pull $selector --path "$pull_dir" --only="*.json" --only="blocks/*.liquid" --ignore="config/settings_schema.json" --ignore="locales/en.default.json" --ignore="locales/en.default.schema.json" $extra_flags --no-color 2>&1; then
+    rm -rf "$pull_dir"
+    return 1
+  fi
+
+  local file
+  while IFS= read -r file; do
+    mkdir -p "$(dirname "${THEME_ROOT}/${file}")"
+    if [[ "$file" == *.json ]]; then
+      cp "${pull_dir}/${file}" "${THEME_ROOT}/${file}"
+    elif [ ! -e "${THEME_ROOT}/${file}" ]; then
+      cp "${pull_dir}/${file}" "${THEME_ROOT}/${file}"
+    fi
+  done < <(cd "$pull_dir" && find . -type f \( -name '*.json' -o -path './blocks/*.liquid' \) | sed 's|^\./||')
+
+  rm -rf "$pull_dir"
+}
+
 # Function to upload theme to Shopify
 upload_theme() {
   local theme_id=$1
@@ -481,6 +511,7 @@ create_theme_with_retry() {
 
 # Export functions for use in other scripts
 export -f build_ignore_flags
+export -f pull_source_settings
 export -f cleanup_failed_theme
 export -f check_theme_exists_by_name
 export -f handle_theme_limit
