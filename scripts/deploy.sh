@@ -218,7 +218,7 @@ if [ -n "${EXISTING_THEME_ID}" ]; then
     # - config/settings_schema.json (theme schema definitions)
     # - locales/en.default.json (English default translations)
     # - locales/en.default.schema.json (English locale schema, if exists)
-    if ! eval shopify theme pull $THEME_SELECTOR --path "$THEME_ROOT" --only="*.json" --only="blocks/*.liquid" --ignore="config/settings_schema.json" --ignore="locales/en.default.json" --ignore="locales/en.default.schema.json" $pull_ignore_flags --no-color 2>&1; then
+    if ! pull_source_settings "$THEME_SELECTOR" "$pull_ignore_flags"; then
       echo "⚠️ Warning: Could not pull settings from source theme"
     else
       echo "✅ Settings and blocks pulled successfully (settings_schema.json and en.default locale files preserved from codebase)"
@@ -329,7 +329,7 @@ if [ "$HAS_NO_SYNC_LABEL" = "false" ]; then
   # - config/settings_schema.json (theme schema definitions)
   # - locales/en.default.json (English default translations)
   # - locales/en.default.schema.json (English locale schema, if exists)
-  if ! eval shopify theme pull $THEME_SELECTOR --path "$THEME_ROOT" --only="*.json" --only="blocks/*.liquid" --ignore="config/settings_schema.json" --ignore="locales/en.default.json" --ignore="locales/en.default.schema.json" $custom_ignore_flags --no-color 2>&1; then
+  if ! pull_source_settings "$THEME_SELECTOR" "$custom_ignore_flags"; then
     echo "⚠️ Warning: Could not pull settings from source theme"
   else
     echo "✅ Settings and blocks pulled successfully (settings_schema.json and en.default locale files preserved from codebase)"
