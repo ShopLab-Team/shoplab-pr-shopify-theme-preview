@@ -5,11 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Fixed
-- Pulling settings from the source theme no longer deletes or overwrites the PR's files: JSON is still taken from the source theme, but blocks are only added when the checkout doesn't have them. Previously a new preview failed with "undefined block type" when the PR (or the base branch) had blocks the source theme didn't have yet, and changed blocks were replaced by the source theme's copy.
-
 ## [1.1.4] - 2026-01-06
 
 ### Added
@@ -19,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Error comments now only show the error and store URL (no theme details)
 - Themes created with errors are always deleted and never shown in PR comments
 - Simplified error handling flow in deploy.sh
+
+### Fixed
+- Pulling settings from the source theme no longer deletes or overwrites the PR's files: JSON is still taken from the source theme, but blocks are only added when the checkout doesn't have them. Previously a new preview failed with "undefined block type" when the PR (or the base branch) had blocks the source theme didn't have yet, and changed blocks were replaced by the source theme's copy.
 
 ## [1.0.0] - 2025-01-01
 
