@@ -298,10 +298,7 @@ upload_theme() {
   LAST_UPLOAD_OUTPUT="$OUTPUT"
   
   # Try to parse JSON response
-  parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}$' | tail -1 || echo "")
-  if [ -z "$parsed_json" ]; then
-    parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}' | tail -1 || echo "")
-  fi
+  parsed_json=$(extract_push_json "$OUTPUT")
 
   if [ $status -eq 0 ]; then
     if [ -n "$parsed_json" ]; then
@@ -326,7 +323,11 @@ upload_theme() {
       return 0
     fi
   else
-    THEME_ERRORS="$OUTPUT"
+    # CLI 5 exits 1 when the store rejects files: show those, not the raw output
+    if [ -n "$parsed_json" ]; then
+      THEME_ERRORS=$(echo "$parsed_json" | extract_json_value "" "format_errors")
+    fi
+    [ -z "$THEME_ERRORS" ] && THEME_ERRORS="$OUTPUT"
     # Check for "doesn't exist" or "not found" errors
     if echo "$OUTPUT" | grep -qi "doesn't exist\|not found"; then
       echo "❌ Theme ID ${theme_id} no longer exists on Shopify. Cannot update."
@@ -394,12 +395,8 @@ create_theme_with_retry() {
 
       # Extract JSON from the output
       local parsed_json
-      parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}$' | tail -1 || echo "")
-      
-      if [ -z "$parsed_json" ]; then
-        parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}' | tail -1 || echo "")
-      fi
-      
+      parsed_json=$(extract_push_json "$OUTPUT")
+
       if [ -n "$parsed_json" ]; then
         echo "✅ Found JSON response from Shopify CLI"
         
