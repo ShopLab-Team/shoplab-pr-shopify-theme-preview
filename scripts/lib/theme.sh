@@ -11,7 +11,7 @@ cleanup_failed_theme() {
   local theme_id=$1
   echo "🧹 Attempting to cleanup theme ${theme_id}..."
   
-  if shopify theme delete --theme "${theme_id}" --force 2>&1 | grep -q "Success"; then
+  if shopify theme delete --theme "${theme_id}" --force > /dev/null 2>&1; then
     echo "✅ Successfully deleted theme ${theme_id}"
     return 0
   else
@@ -54,7 +54,8 @@ check_theme_exists_by_name() {
         const themeNames = themes.map(t => t.name);
         console.error('Found ' + themes.length + ' themes: ' + JSON.stringify(themeNames));
       }
-      const found = themes.find(t => t.name === name);
+      // Only unpublished themes: never push PR code onto a live or development theme
+      const found = themes.find(t => t.name === name && t.role === 'unpublished');
       if (found) {
         console.error('✅ Found matching theme: ' + found.name + ' (ID: ' + found.id + ')');
       } else {
@@ -298,10 +299,7 @@ upload_theme() {
   LAST_UPLOAD_OUTPUT="$OUTPUT"
   
   # Try to parse JSON response
-  parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}$' | tail -1 || echo "")
-  if [ -z "$parsed_json" ]; then
-    parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}' | tail -1 || echo "")
-  fi
+  parsed_json=$(printf '%s' "$OUTPUT" | extract_cli_result)
 
   if [ $status -eq 0 ]; then
     if [ -n "$parsed_json" ]; then
@@ -375,9 +373,14 @@ create_theme_with_retry() {
       LAST_UPLOAD_OUTPUT="$OUTPUT"
       
       echo "🔍 Checking theme creation output..."
-      
-      # First check if this is a rate limit error
-      if echo "$OUTPUT" | grep -qi "limit\|maximum\|exceeded\|too many"; then
+
+      # Extract the result object from the output
+      local parsed_json
+      parsed_json=$(printf '%s' "$OUTPUT" | extract_cli_result)
+
+      # Check for a theme limit error, only when no theme came back
+      # (a theme name or progress message containing "limit" must not trigger it)
+      if ! printf '%s' "$parsed_json" | grep -q '"theme":{' && echo "$OUTPUT" | grep -qi "limit\|maximum\|exceeded\|too many"; then
         echo "⚠️ Theme limit error detected"
         if [ "$limit_cleanup_attempted" = false ] && handle_theme_limit; then
           limit_cleanup_attempted=true
@@ -392,14 +395,6 @@ create_theme_with_retry() {
         return 1
       fi
 
-      # Extract JSON from the output
-      local parsed_json
-      parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}$' | tail -1 || echo "")
-      
-      if [ -z "$parsed_json" ]; then
-        parsed_json=$(printf '%s' "$OUTPUT" | grep -o '{"theme":{.*}}' | tail -1 || echo "")
-      fi
-      
       if [ -n "$parsed_json" ]; then
         echo "✅ Found JSON response from Shopify CLI"
         

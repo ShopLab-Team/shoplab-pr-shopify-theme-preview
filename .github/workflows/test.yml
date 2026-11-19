@@ -26,6 +26,9 @@ jobs:
 
       - name: Test pull_source_settings
         run: bash tests/pull-source-settings.sh
+
+      - name: Test CLI JSON output parsing
+        run: bash tests/cli-json-output.sh
           
       - name: Validate action.yml
         run: |
