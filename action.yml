@@ -67,7 +67,8 @@ runs:
       shell: bash
       run: |
         echo "📦 Installing required tools..."
-        npm install -g @shopify/cli@latest
+        # Pinned to the 5.x major: the scripts parse its --json output, which changes between majors
+        npm install -g @shopify/cli@5
         
         # Install jq for JSON parsing (fallback for systems without Node)
         if ! command -v jq &> /dev/null; then

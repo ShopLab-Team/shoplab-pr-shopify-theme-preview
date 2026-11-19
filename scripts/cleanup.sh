@@ -130,7 +130,7 @@ THEME_NAME=$(printf '%s' "$PR_TITLE" | \
 echo "📝 Looking for theme associated with this PR (default name: ${THEME_NAME})"
 
 echo "🔍 Looking for theme marker in PR comments..."
-COMMENTS=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments")
+COMMENTS=$(github_api "/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100")
 
 THEME_ID=""
 THEME_NAME_FROM_COMMENT=""
@@ -185,26 +185,36 @@ find_and_delete_by_name() {
   local label="${2:-exact name match}"
   echo "🔍 Searching for theme by exact name match (${label}): ${theme_name}"
   
-  # Get list of all themes
-  THEME_LIST=$(shopify theme list --json 2>/dev/null || echo "[]")
-  
-  # Try to find theme by exact name match using Node.js for JSON parsing
+  # Get list of all themes. Stderr is kept apart so warnings (e.g. Node deprecations)
+  # don't break the JSON, and is only shown when the command fails.
+  local list_stderr
+  list_stderr=$(mktemp)
+  if ! THEME_LIST=$(shopify theme list --json 2>"$list_stderr"); then
+    echo "⚠️ Could not list themes on the store:"
+    cat "$list_stderr"
+    rm -f "$list_stderr"
+    return 1
+  fi
+  rm -f "$list_stderr"
+
+  # Find an unpublished theme with this exact name. CLI 5.x prints {"themes":[...]},
+  # older versions a bare array. Live and development themes are never matched.
   FOUND_THEME_ID=$(echo "$THEME_LIST" | node -e '
     let data = "";
     process.stdin.on("data", chunk => data += chunk);
     process.stdin.on("end", () => {
       try {
-        const themes = JSON.parse(data);
-        if (Array.isArray(themes)) {
-          const theme = themes.find(t => t.name === process.argv[1]);
-          if (theme && theme.id) {
-            process.stdout.write(String(theme.id));
-          }
+        const parsed = JSON.parse(data);
+        const themes = Array.isArray(parsed) ? parsed : (parsed && parsed.themes) || [];
+        console.error("ℹ️ Store has " + themes.length + " themes");
+        const theme = themes.find(t => t.name === process.argv[1] && t.role === "unpublished");
+        if (theme && theme.id) {
+          process.stdout.write(String(theme.id));
         }
       } catch (e) {
-        // Silent fail
+        console.error("⚠️ Could not parse theme list: " + data.substring(0, 200));
       }
-    });' "$theme_name" 2>/dev/null || echo "")
+    });' "$theme_name" || echo "")
   
   if [ -n "$FOUND_THEME_ID" ]; then
     echo "✅ Found theme by name with ID: ${FOUND_THEME_ID}"
@@ -214,7 +224,7 @@ find_and_delete_by_name() {
       return $?
     fi
   else
-    echo "ℹ️ No theme found with name: ${theme_name}"
+    echo "ℹ️ No unpublished theme found with name: ${theme_name}"
     return 1
   fi
 }

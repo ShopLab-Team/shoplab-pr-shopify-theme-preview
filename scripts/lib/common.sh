@@ -61,7 +61,44 @@ parse_json() {
   " 2>/dev/null || echo "$default_value"
 }
 
+# Helper function: extract the result object from `shopify theme push --json` output (stdin).
+# CLI 3.x prints one line: {"theme":{...}}. CLI 5.x prints NDJSON {"type":"progress",...} lines,
+# then a pretty-printed {"status":...,"theme":{...},"issues":[...]}. Text from stderr can be mixed in.
+# Prints the last JSON object that isn't a progress event, compacted to one line, or nothing.
+extract_cli_result() {
+  node -e '
+    const out = require("fs").readFileSync(0, "utf8");
+    let result = "";
+    for (let i = 0; i < out.length; i++) {
+      if (out[i] !== "{") continue;
+      // Find the matching closing brace, skipping braces inside strings
+      let depth = 0, inString = false, end = -1;
+      for (let j = i; j < out.length; j++) {
+        const c = out[j];
+        if (inString) {
+          if (c === "\\") j++;
+          else if (c === "\"") inString = false;
+        } else if (c === "\"") inString = true;
+        else if (c === "{") depth++;
+        else if (c === "}" && --depth === 0) { end = j; break; }
+      }
+      if (end === -1) continue;
+      try {
+        const obj = JSON.parse(out.slice(i, end + 1));
+        if (obj && obj.type !== "progress") result = JSON.stringify(obj);
+        i = end;
+      } catch (e) {
+        // Not JSON (e.g. Liquid in an error message) - keep scanning
+      }
+    }
+    process.stdout.write(result);
+  ' 2>/dev/null || true
+}
+
 # Helper function: Safe JSON extraction with specific queries
+# Accepts both the CLI 3.x push result ({theme:{id,errors,warning}}) and
+# the CLI 5.x one ({status,theme:{id},issues:[{filePath,message}]}). A 5.x "partial" status
+# counts as at least one error, even when no issues are listed.
 extract_json_value() {
   local json_input="$1"
   local extraction_type="$2"
@@ -76,13 +113,13 @@ extract_json_value() {
       echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log((o.theme?.id)||'');}catch(e){console.log('');}"
       ;;
     "error_count")
-      echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log((o.theme?.errors)?Object.keys(o.theme.errors).length:0);}catch(e){console.log('0');}"
+      echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));const n=Array.isArray(o.issues)?o.issues.length:(o.theme?.errors)?Object.keys(o.theme.errors).length:0;console.log(o.status==='partial'?Math.max(n,1):n);}catch(e){console.log('0');}"
       ;;
     "warning")
       echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(o.theme?.warning||'');}catch(e){console.log('');}"
       ;;
     "format_errors")
-      echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));const e=o.theme?.errors||{};const l=Object.entries(e).map(([k,v])=>'• '+k+': '+(Array.isArray(v)?v.join(', '):v));console.log(l.join('\\n'));}catch(e){console.log('');}"
+      echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));const e=o.theme?.errors||{};const l=Array.isArray(o.issues)?o.issues.map(i=>'• '+i.filePath+': '+i.message):Object.entries(e).map(([k,v])=>'• '+k+': '+(Array.isArray(v)?v.join(', '):v));console.log(l.join('\\n'));}catch(e){console.log('');}"
       ;;
     *)
       echo ""
@@ -147,4 +184,5 @@ export -f strip_ansi_codes
 export -f clean_for_slack
 export -f parse_json
 export -f extract_json_value
+export -f extract_cli_result
 export -f extract_latest_theme_marker
