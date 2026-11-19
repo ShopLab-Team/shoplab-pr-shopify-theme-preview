@@ -14,7 +14,7 @@ cat > "$WORK/bin/shopify" <<'EOF'
 #!/bin/bash
 case "$2" in
   push) cat "$FAKE_PUSH_OUTPUT"; exit "${FAKE_PUSH_STATUS:-0}" ;;
-  list) cat "$FAKE_LIST_OUTPUT" ;;
+  list) echo "(node:1) [DEP0040] DeprecationWarning: The punycode module is deprecated." >&2; cat "$FAKE_LIST_OUTPUT" ;;
   delete)
     while [ $# -gt 0 ]; do case "$1" in -t|--theme) echo "$2" >> "$FAKE_DELETED";; esac; shift; done
     echo "╭─ success ───╮"; echo "│ The theme was deleted. │"; echo "╰─────────────╯" ;;

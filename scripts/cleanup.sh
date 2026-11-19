@@ -185,12 +185,17 @@ find_and_delete_by_name() {
   local label="${2:-exact name match}"
   echo "🔍 Searching for theme by exact name match (${label}): ${theme_name}"
   
-  # Get list of all themes
-  if ! THEME_LIST=$(shopify theme list --json 2>&1); then
+  # Get list of all themes. Stderr is kept apart so warnings (e.g. Node deprecations)
+  # don't break the JSON, and is only shown when the command fails.
+  local list_stderr
+  list_stderr=$(mktemp)
+  if ! THEME_LIST=$(shopify theme list --json 2>"$list_stderr"); then
     echo "⚠️ Could not list themes on the store:"
-    echo "$THEME_LIST"
+    cat "$list_stderr"
+    rm -f "$list_stderr"
     return 1
   fi
+  rm -f "$list_stderr"
 
   # Find an unpublished theme with this exact name. CLI 5.x prints {"themes":[...]},
   # older versions a bare array. Live and development themes are never matched.
