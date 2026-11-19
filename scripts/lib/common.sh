@@ -97,7 +97,8 @@ extract_cli_result() {
 
 # Helper function: Safe JSON extraction with specific queries
 # Accepts both the CLI 3.x push result ({theme:{id,errors,warning}}) and
-# the CLI 5.x one ({status,theme:{id},issues:[{filePath,message}]})
+# the CLI 5.x one ({status,theme:{id},issues:[{filePath,message}]}). A 5.x "partial" status
+# counts as at least one error, even when no issues are listed.
 extract_json_value() {
   local json_input="$1"
   local extraction_type="$2"
@@ -112,7 +113,7 @@ extract_json_value() {
       echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log((o.theme?.id)||'');}catch(e){console.log('');}"
       ;;
     "error_count")
-      echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(Array.isArray(o.issues)?o.issues.length:(o.theme?.errors)?Object.keys(o.theme.errors).length:0);}catch(e){console.log('0');}"
+      echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));const n=Array.isArray(o.issues)?o.issues.length:(o.theme?.errors)?Object.keys(o.theme.errors).length:0;console.log(o.status==='partial'?Math.max(n,1):n);}catch(e){console.log('0');}"
       ;;
     "warning")
       echo "$json_input" | node -e "try{const o=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(o.theme?.warning||'');}catch(e){console.log('');}"

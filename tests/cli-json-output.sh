@@ -90,6 +90,13 @@ rm -f "$FAKE_DELETED"
 rc=0; upload_theme 555 false > /dev/null || rc=$?
 check "5.x partial update fails" "$rc" 1
 
+# 3b. A partial result with no issues listed is still a failure.
+{ progress; echo '{"status":"partial","changed":true,"theme":{"id":"556","name":"x","role":"unpublished","storeDomain":"s","previewUrl":null,"editorUrl":null},"issues":[]}'; } > "$WORK/push.out"
+rc=0; create_theme_with_retry "x" > /dev/null || rc=$?
+check "5.x partial without issues fails" "$rc" 1
+check "5.x partial without issues theme deleted" "$(cat "$FAKE_DELETED")" 556
+rm -f "$FAKE_DELETED"
+
 # 4. Legacy 3.x single-line result still parses.
 echo '{"theme":{"id":777,"name":"x","role":"unpublished","shop":"s","editor_url":"e","preview_url":"p"}}' > "$WORK/push.out"
 rc=0; create_theme_with_retry "x" > /dev/null || rc=$?
