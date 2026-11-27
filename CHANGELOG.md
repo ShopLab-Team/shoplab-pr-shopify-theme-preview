@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Successful previews no longer report "Shopify Theme Preview Failed" with Shopify CLI 5.x. `theme push --json` now prints progress lines and then a multi-line result, which the old parser couldn't read. The theme was created, but no theme ID was saved in the PR comments. Both the old and new output formats are now parsed, and CLI 5.x upload issues are reported as errors.
+- PR cleanup now finds the theme by name when no theme ID was saved. It couldn't read the CLI 5.x `theme list` format (`{"themes":[...]}`), so every preview whose deploy had falsely failed was never deleted.
+- A theme name or file path containing "limit" no longer triggers the theme-limit handling, which deleted older previews.
+- `cleanup_failed_theme` now checks the CLI's exit code instead of looking for "Success" in its output, which CLI 5.x doesn't print with that capitalisation.
+- PR comments are now read 100 per page instead of 30, so the theme ID marker is still found on busy PRs.
+
+### Changed
+- Shopify CLI is pinned to the 5.x major (`@shopify/cli@5`) instead of `@latest`, so a new major can't change the JSON output without warning (same pin as shopify-theme-deployment-manager#8).
+- Finding a theme by name (deploy and cleanup) now only matches unpublished themes, so a live or development theme with the same name is never updated or deleted.
+- Cleanup now logs how many themes the store has, which name it searched for, and the CLI error when the theme list fails.
+
 ## [1.1.4] - 2026-01-06
 
 ### Added

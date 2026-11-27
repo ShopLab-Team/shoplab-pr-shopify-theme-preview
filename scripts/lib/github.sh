@@ -151,7 +151,7 @@ fetch_pr_comments() {
   local pr_number="$1"
   local repo="${GITHUB_REPOSITORY}"
   
-  github_api "/repos/${repo}/issues/${pr_number}/comments"
+  github_api "/repos/${repo}/issues/${pr_number}/comments?per_page=100"
 }
 
 # Function to check if PR has a specific label
