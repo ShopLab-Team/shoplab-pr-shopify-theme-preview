@@ -90,6 +90,42 @@ extract_json_value() {
   esac
 }
 
+# Helper function: extract the `theme push --json` result from the CLI output.
+# CLI 4 prints `{"theme":{...}}` on one line. CLI 5 prints one JSON event per
+# line (progress, diagnostic), then the result as multi-line JSON with
+# `issues` instead of `theme.errors`. Prints the result in the CLI 4 shape so
+# extract_json_value reads both, or nothing when there is no theme in it.
+extract_push_json() {
+  local output="$1"
+  local json
+
+  json=$(printf '%s' "$output" | grep -o '{"theme":{.*}}$' | tail -1 || echo "")
+  if [ -z "$json" ]; then
+    json=$(printf '%s' "$output" | grep -o '{"theme":{.*}}' | tail -1 || echo "")
+  fi
+  if [ -n "$json" ]; then
+    echo "$json"
+    return 0
+  fi
+
+  printf '%s' "$output" | node -e "
+    const lines = require('fs').readFileSync(0, 'utf8').split('\n').filter((line) => {
+      try { return !['progress', 'diagnostic'].includes(JSON.parse(line).type); } catch (e) { return true; }
+    });
+    const start = lines.findIndex((line) => line.startsWith('{'));
+    let end = lines.length - 1;
+    while (end >= 0 && !lines[end].trimEnd().endsWith('}')) end--;
+    try {
+      const result = JSON.parse(lines.slice(start, end + 1).join('\n'));
+      if (result.theme) {
+        const errors = {};
+        for (const issue of result.issues || []) (errors[issue.filePath] ||= []).push(issue.message);
+        console.log(JSON.stringify({ theme: { ...result.theme, errors } }));
+      }
+    } catch (e) {}
+  " 2>/dev/null || true
+}
+
 # Helper function: extract the most recent theme marker from PR comments
 extract_latest_theme_marker() {
   local input_json
@@ -147,4 +183,5 @@ export -f strip_ansi_codes
 export -f clean_for_slack
 export -f parse_json
 export -f extract_json_value
+export -f extract_push_json
 export -f extract_latest_theme_marker

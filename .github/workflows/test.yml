@@ -26,6 +26,9 @@ jobs:
 
       - name: Test pull_source_settings
         run: bash tests/pull-source-settings.sh
+
+      - name: Test theme push --json parsing
+        run: bash tests/push-json.sh
           
       - name: Validate action.yml
         run: |
